@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.5)
-project(leetecode)
+project(ipc)
+set(CMAKE_C_STANDARD 11)
 
 include_directories(include)
-set(CMAKE_CXX_STANDARD 11)
+aux_source_directory(. MAIN_DIR)
+aux_source_directory(src SOURCE_DIR)
 
-set(SOURCE_FILES main.cpp)
-
-add_executable(main ${SOURCE_FILES})
+add_executable(main ${MAIN_DIR} ${SOURCE_DIR})
