@@ -104,5 +104,6 @@ void lmkfifo(char *file, int mode)
 void lunlink(char *file)
 {
     int ret = unlink(file);
+    int val = errno;
     ERROR_CHECK(ret, <, 0, file, "unlink %s failed!");
 }

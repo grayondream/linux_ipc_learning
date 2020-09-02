@@ -7,6 +7,6 @@ int main()
     //mkfifo_test();
     //mkfifo_client_process();
     //mkfifo_server_process();    
-    mult_fifo_server_process();
-    //mult_fifo_client_process();
+    //mult_fifo_server_process();
+    mult_fifo_client_process();
 }

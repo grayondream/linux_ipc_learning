@@ -172,6 +172,7 @@ void mkfifo_client_process()
 //server 通过发送id + ' ' + '文件名'的格式向指定的client发送请求，id取值范围为01-20占两个字节
 void mult_fifo_server_process()
 {
+    printf("start server and send file into client!\n");
     int mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
     lmkfifo(MULT_SERVER_NAME, mode);
     int server_rfd = lopen(MULT_SERVER_NAME, O_RDONLY);
@@ -197,13 +198,13 @@ void mult_fifo_server_process()
         
         //将数据写入客户端的fifo
         lwrite(client_wfd, ptr, strlen(ptr));
-        lunlink(client);
         
         //等待客户端回传，状态
         while(lread(server_rfd, buff, MAX_LEN) > 0)
             printf(buff);
             
         printf("\n");
+        lunlink(client);
     }
     
     lunlink(server_rfd);
@@ -211,6 +212,7 @@ void mult_fifo_server_process()
 
 void mult_fifo_client_process()
 {
+    printf("start client waiting for the post from server!\n");
     int id = 1;
     int mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP ;
     lmkfifo(MULT_SERVER_NAME, mode);
@@ -237,8 +239,8 @@ void mult_fifo_client_process()
     snprintf(buff, MAX_LEN, "%d load data from %s end!", id, client_name);
     lwrite(server_wfd, buff, MAX_LEN);
     
-    lunlink(server_wfd);
-    lunlink(client_rfd);
+    lunlink(client_name);
+    lunlink(MULT_SERVER_NAME);
     
     safe_exit(NULL);
 }
