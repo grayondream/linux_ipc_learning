@@ -244,3 +244,14 @@ void mult_fifo_client_process()
     
     safe_exit(NULL);
 }
+
+void pipe_main(int argc, char**argv)
+{
+    //pipe_test();
+    //popen_test();
+    //mkfifo_test();
+    //mkfifo_client_process();
+    //mkfifo_server_process();    
+    //mult_fifo_server_process();
+    mult_fifo_client_process();
+}

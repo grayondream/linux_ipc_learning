@@ -16,3 +16,5 @@ void mkfifo_server_process();
 //多客户端，多服务器通信
 void mult_fifo_server_process();
 void mult_fifo_client_process();
+
+void pipe_main(int argc, char**argv);

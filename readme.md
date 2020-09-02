@@ -8,6 +8,14 @@ int lwrite(int writefd, char *buff, int len)
     return ret;
 }
 ```
+&emsp;&emsp;同步和异步IO的概念：
+- 同步是用户线程发起I/O请求后需要等待或者轮询内核I/O操作完成后才能继续执行；
+- 异步是用户线程发起I/O请求后仍需要继续执行，当内核I/O操作完成后会通知用户线程，或者调用用户线程注册的回调函数。
+
+&emsp;&emsp;阻塞和非阻塞IO的概念：
+- 阻塞是指I/O操作需要彻底完成后才能返回用户空间；
+- 非阻塞是指I/O操作被调用后立即返回一个状态值，无需等I/O操作彻底完成。
+
 # 1 管道
 ## 1.1 无名管道
 ### 1.1.1 简介
@@ -364,3 +372,121 @@ int fcntl(int fd, int cmd, ... /* arg */ );
 
 
 # 2 消息队列
+## 2.1 简介
+&emsp;&emsp;消息队列是一种进程间通信或同一进程的不同线程间的通信方式，软件的贮列用来处理一系列的输入，通常是来自用户。消息队列提供了异步的通信协议，每一个贮列中的纪录包含详细说明的数据，包含发生的时间，输入设备的种类，以及特定的输入参数，也就是说：消息的发送者和接收者不需要同时与消息队列交互。消息会保存在队列中，直到接收者取回它。
+&emsp;&emsp;消息队列的实现可以看做一个消息的链表，有权限的进程或者线程向该队列中添加消息，有权限的进程或者线程从队列中取出消息。写消息的线程或者进程与读消息的进程或线程是异步的。消息队列是随内核持续的，即进程终止消息队列依然存在，除非显式的删除队列。
+&emsp;&emsp;消息队列的实现分为Posix消息队列和System V消息队列，具体区别如下：
+- Posix消息队列总是返回最高优先级最早的消息；System V消息队列返回任意指定优先级的消息；
+- 当向一个空消息队列中添加消息时，Posix消息队列允许产生一个信号或者启动一个线程；System V则无；
+
+&emsp;&emsp;消息队列的每个条目包含：
+- 优先级；
+- 消息长度（可以为0）；
+- 数据(如果长度大于0)；
+
+![](img/msg_queue.drawio.svg)
+
+## 2.2 Posix消息队列
+### 2.2.1 相关API
+```c
+#include <mqueue.h>
+mqd_t mq_open(const char *name, int oflag, mode_t mode, struct mq_attr *attr);  //需要链接库 -lrt
+```
+&emsp;&emsp;创建或者打开一个已经存在的消息队列:
+- ```name```：消息队列的名称需要符合Posix标准，一般为```/***```；
+- ```oflag```：打开文件的模式，比如```ORDONLY```等；
+- ```mode```：打开文件的权限；
+- ```attr```：消息队列的属性，具体见下。
+- 返回值-1出错，成功则返回消息队列的描述符。
+
+```c
+struct mq_attr 
+{
+    long mq_flags;       /* Flags: 0 or O_NONBLOCK */
+    long mq_maxmsg;      /* Max. # of messages on queue */
+    long mq_msgsize;     /* Max. message size (bytes) */
+    long mq_curmsgs;     /* # of messages currently in queue */
+};
+```
+&emsp;&emsp;属性参数的四个元素分别表示：
+- ```mq_flags```：消息队列的属性，0或者```O_NONBLOCK```；
+- ```mq_maxmsg```：支持的最大消息数；
+- ```mq_msgsize```：消息数据的最大size；
+- ```mq_curmsgs```：当前消息队列的消息数。
+
+```c
+int mq_close(mqd_t mqdes);
+```
+&emsp;&emsp;关闭一个消息队列，表示该描述符失效，但并不会从系统中删除消息队列。
+- ```mqdes```：消息队列的描述符，通过```mq_open```获得。
+
+```c
+int mq_unlink(const char *name);
+```
+&emsp;&emsp;删除消息队列：
+- ```name```：消息队列的名字。
+  
+&emsp;&emsp;消息队列本身维护了一个引用计数，当一个进程打开消息队列时引用计数加一，关闭时减一，只有当引用计数为0时才会真正删除。
+
+```c
+int mq_getattr(mqd_t mqdes, struct mq_attr *attr);
+int mq_setattr(mqd_t mqdes, const struct mq_attr *newattr,struct mq_attr *oldattr);
+```
+&emsp;&emsp;两个api的含义顾名思义，分别是获取和设置消息队列的属性：
+- ```mqdes```：消息队列的描述符；
+- ```attr```：属性变量地址；
+- ```newattr```：要设置的参数值；
+- ```oldattr```：设置之后之前的属性值；
+- 返回-1表示出错，0表示成功。
+
+```c
+int mq_send(mqd_t mqdes, const char *msg_ptr, size_t msg_len, unsigned int msg_prio);
+```
+&emsp;&emsp;向消息队列中添加消息：
+- ```mqdes```：消息队列的描述符；
+- ```msg_ptr```：数据的指针；
+- ```msg_len```：数据尺寸；
+- ```msg_prio```：当前消息的优先级，要求必须小于```MQ_PRIO_MAX```；
+- 返回值：0成功，-1失败。
+
+```c
+ssize_t mq_receive(mqd_t mqdes, char *msg_ptr, size_t msg_len, unsigned int *msg_prio);
+```
+&emsp;&emsp;从消息队列中优先级最高最早的消息：
+- ```mqdes```：消息队列的描述符；
+- ```msg_ptr```：数据的指针；
+- ```msg_len```：数据尺寸；
+- ```msg_prio```：获取的消息优先级；
+- 返回值：非-1表示获取的数据的字节数；-1失败。
+
+```c
+int mq_notify(mqd_t mqdes, const struct sigevent *sevp);
+```
+&emsp;&emsp;允许进程注册或者注销异步事件通知。
+- ```mqdes```：消息队列的描述符；
+- ```sevq```：要注册的信号事件：
+  - 如果```sevp==NULL```，则当前进程希望在有一个消息到达指定先前为空的消息队列时得到通知；
+  - 如果```sevq!=NULL```，则当前进程被注册为接受所只是队列的通知，已经存在的注册会被注销；
+  - 任意时刻只能有一个进程被注册为接收某个队列的通知；
+  - 当有一个消息到达某个先前为空的队列，并且已经有一个进程被注册为接收该队列的通知时，只有没有任何线程只在阻塞该队列的```mq_receive```调用中的前提下，通知才会发出。即```mq_receive```调用中的阻塞优先级比任何通知都高；
+  - 如果通知被发送给他的注册程序时，其注册即被注销。该进程必须再次调用```mq_notify```注册。
+
+```c
+union sigval {          /* Data passed with notification */
+    int     sival_int;         /* Integer value */
+    void   *sival_ptr;         /* Pointer value */
+};
+
+struct sigevent {
+    int          sigev_notify;                           /* Notification method */
+    int          sigev_signo;                            /* Notification signal */
+    union sigval sigev_value;                            /* Data passed with notification */
+    void       (*sigev_notify_function) (union sigval);  /* Function used for thread notification (SIGEV_THREAD) */
+    void        *sigev_notify_attributes;                /* Attributes for notification thread (SIGEV_THREAD) */
+    pid_t        sigev_notify_thread_id;                 /* ID of thread to signal (SIGEV_THREAD_ID) */
+};
+```
+### 2.2.2 示例程序
+## 2.2 System V消息队列
+
+## 3 信号量

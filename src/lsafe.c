@@ -1,4 +1,4 @@
-#include "lsafe.h"
+
 #include <unistd.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -7,6 +7,8 @@
 #include <string.h>
 #include <errno.h>
 #include <wait.h>
+#include <mqueue.h>
+#include "lsafe.h"
 
 void err_exit(const char *buff, int err_ret)
 {
@@ -106,4 +108,48 @@ void lunlink(char *file)
     int ret = unlink(file);
     int val = errno;
     ERROR_CHECK(ret, <, 0, file, "unlink %s failed!");
+}
+
+mqd_t lmq_open(char *name, int flag, int mode, struct mq_attr *attr)
+{
+    mqd_t ret = mq_open(name, flag, mode, attr);
+    ERROR_CHECK(ret, ==, -1, name, "create msg queue %s failed!");
+    return ret;
+}
+
+void lmq_close(mqd_t mq)
+{
+    int ret = mq_close(mq);
+    ERROR_CHECK(ret, <, 0, mq, "close msg queue %d failed!");
+}
+
+void lmq_unlink(char *name)
+{
+    int ret = mq_unlink(name);
+    ERROR_CHECK(ret, <, 0, name, "unlink msg queue %s failed!");
+}
+
+void lmq_getattr(mqd_t mq, struct mq_attr *attr)
+{
+    int ret = mq_getattr(mq, attr);
+    ERROR_CHECK(ret, < , 0, mq, "get the attribution from %d failed!");
+}
+
+void lmq_setattr(mqd_t mq, const struct mq_attr *attr, struct mq_attr *oattr)
+{
+    int ret = mq_setattr(mq, attr, oattr);
+    ERROR_CHECK(ret, <, 0, mq, "set the attribution into %d failed!");
+}
+
+void lmq_send_msg(mqd_t mq, const char *ptr, int len, int prior)
+{
+    int ret = mq_send(mq, ptr, len, prior);
+    ERROR_CHECK(ret, <, 0, mq, "send message into %d failed!");
+}
+
+int lmq_receive_msg(mqd_t mq, char *ptr, int len, int *prior)
+{
+    int ret = mq_receive(mq, ptr, len, prior);
+    ERROR_CHECK(ret, <, 0, mq, "receive message from %d failed!");
+    return ret;
 }
