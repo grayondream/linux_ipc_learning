@@ -1091,9 +1091,88 @@ received signal 64, code = -1, ival = 2
 ## 2.3 System V消息队列
 &emsp;&emsp;System V消息队列和Posix消息队列类似，会在内核中维护一个消息队列的链表，该链表的结构如下：
 ```c
+/* Structure of record for one message inside the kernel.
+   The type `struct msg' is opaque.  */
+struct msqid_ds {
+    struct ipc_perm msg_perm;     /* Ownership and permissions */
+    time_t          msg_stime;    /* Time of last msgsnd(2) */
+    time_t          msg_rtime;    /* Time of last msgrcv(2) */
+    time_t          msg_ctime;    /* Time of last change */
+    unsigned long   __msg_cbytes; /* Current number of bytes in
+                                    queue (nonstandard) */
+    msgqnum_t       msg_qnum;     /* Current number of messages
+                                    in queue */
+    msglen_t        msg_qbytes;   /* Maximum number of bytes
+                                    allowed in queue */
+    pid_t           msg_lspid;    /* PID of last msgsnd(2) */
+    pid_t           msg_lrpid;    /* PID of last msgrcv(2) */
+};
 
 ```
+&emsp;&emsp;能够看到我电脑上的版本和作者使用的版本不同已经看不到具体的消息指针了。
+
 ### 2.3.1 API
+```c
+int msgget(key_t key, int msgflg);
+```
+&emsp;&emsp;创建或者打开一个消息队列：
+- ```key```：一个键值，可以使```IPC_PRIVATE```也可以是```ftok```获取的键值；
+- ```msgflg```：读写权限；
+- 返回值：-1表示失败，否则为队列的标识符。
+
+```c
+int msgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg);
+```
+&emsp;&emsp;向消息队列中发送信息：
+- ```msqid```：为消息队列的标识符；
+- ```msgp```：一般为结构：
+```c
+struct msgbuf 
+{
+    long mtype;       /* message type, must be > 0 */
+    char mtext[1];    /* message data */
+};
+```
+&emsp;&emsp;但是不强制，也可以定义自己的消息数据结构；
+- ```msgsz```：消息的尺寸；
+- ```msgflg```：消息的标志位，可以是0也可以是，```IPC_WAIT```，```IPC_WAIT```使得该调用非阻塞，如果没有可用空间则函数返回，可能发生的条件为：
+  - 在队列中已经存在太多字节；
+  - 系统范围内存在太多消息：
+  - 如果上面两个条件一个发生且```IPC_NOWAIT```置位，则返回一个```EAGAIN```错误；如果上面的两个条件发生一个且```IPC_NOWAIT```并未置位，则调用进入睡眠，直到：
+    - 有新的消息存放空间；
+    - ```msgid```消息被系统删除，返回一个```EIDRM```错误；
+    - 调用线程被某个捕获的信号中断，返回一个```EINTER```错误。
+
+```c
+ssize_t msgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg);
+```
+&emsp;&emsp;从System V消息队列中读取消息：
+- ```msqid```：消息队列标识符；
+- ```msgp```：消息存放地址；
+- ```msgsz```：消息的长度；
+- ```msgtyp```：希望读取的消息类型：
+  - ```msgtyp == 0```：放回队列的第一个消息；
+  - ```msgtyp > 0```：返回类型为```msgtyp```的第一个消息；
+  - ```msgtyp < 0```：放回类型值小于或者等于```msgtyp```参数的绝对值的消息中类型值最小的第一个消息；
+- ```msgflg```：指定如果希望获取的消息不存时的错误处理方式：
+  - 设置```IPC_NOWAIT```，则立即返回一个```ENOMSG```；
+  - 没有设置```IPC_NOWAIT```，则阻塞至下面的事件中一个发生为止：
+    - 有一个所请求的消息类型可获取；
+    - 该消息队列被从系统中删除；
+    - 调用线程被某个捕获的信号所中断。
+  - 如果接受的数据长度大于指定的长度；
+    - 设定了```MSG_NOERROR```则对数据进行截断；
+    - 没有设定```MSG_NOERROR```，则返回错误```E2BIG```。
+
+```c
+int msgctl(int msqid, int cmd, struct msqid_ds *buf);
+```
+&emsp;&emsp;对System V的消息队列进行操作：
+- ```msqid```：消息队列的标识符；
+- ```cmd```：支持的队列操作方式：
+  - ```IPC_RMID```：删除消息队列，所有消息将被抛弃；
+  - ```IPC_STAT```：获取消息队列的参数存放到buf中；
+  - ```IPC_SET```：给所指定的消息队列设置buf中设置的四个参数```msg_perm.uid,msg_perm.gid,mode,msg_qbytes```。
 
 ### 2.3.2 示例
 ## 3 信号量
