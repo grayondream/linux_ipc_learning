@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.5)
 project(ipc)
 set(CMAKE_C_STANDARD 11)
 
+add_definitions(-w)
+
 include_directories(include)
 aux_source_directory(. MAIN_DIR)
 aux_source_directory(src SOURCE_DIR)

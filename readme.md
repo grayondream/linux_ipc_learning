@@ -387,7 +387,7 @@ int fcntl(int fd, int cmd, ... /* arg */ );
 ![](img/msg_queue.drawio.svg)
 
 ## 2.2 Posix消息队列
-### 2.2.1 相关API
+### 2.2.1 消息队列
 ```c
 #include <mqueue.h>
 mqd_t mq_open(const char *name, int oflag, mode_t mode, struct mq_attr *attr);  //需要链接库 -lrt
@@ -486,7 +486,614 @@ struct sigevent {
     pid_t        sigev_notify_thread_id;                 /* ID of thread to signal (SIGEV_THREAD_ID) */
 };
 ```
-### 2.2.2 示例程序
-## 2.2 System V消息队列
 
+&emsp;&emsp;消息队列的限制：
+- ```mq_mqxmsg```:消息队列中的最大消息数；
+- ```mq_msgsize```：消息队列中给定消息的最大字节数。
+- ```MQ_OPEN_MAX```：一个进程能够同时打开的消息队列最大数目（Posix=8）；
+- ```MQ_PRIO_MAX```：任意消息的最大优先级+1(Posix>=32).
+
+### 2.2.2 信号
+&emsp;&emsp;信号（英语：Signals）是Unix、类Unix以及其他POSIX兼容的操作系统中进程间通讯的一种有限制的方式。它是一种异步的通知机制，用来提醒进程一个事件已经发生。当一个信号发送给一个进程，操作系统中断了进程正常的控制流程，此时，任何非原子操作都将被中断。如果进程定义了信号的处理函数，那么它将被执行，否则就执行默认的处理函数。
+&emsp;&emsp;信号类似于中断，不同之处在于中断由处理器调解并由内核处理，而信号由内核调解(可能通过系统调用)并由进程处理。内核可以将中断作为信号传递给导致中断的进程(典型的例子有SIGSEGV、SIGBUS、SIGILL和SIGFPE)。
+&emsp;&emsp;Unix的信号分为：
+- 实时信号：取值范围为```SIGRTMIN```到```SIGRTMAX```之间，Posix要求至少提供```RTSIG_MAX```种信号；
+- 其他信号：无法实时性行为的信号。
+
+&emsp;&emsp;对于实时信号在安装信号处理程序时必须给```sigaction```指定```SA_SIGINFO```标志。
+&emsp;&emsp;Unix系统中的实时性含义为：
+- 信号是排队的；
+- 当有多个```SIGRTMIN-SIGRTMAX```之间的信号解阻塞排队时，值较小的优先进行信号递交；
+- 当某个非实时信号递交时，传递给它的信号处理程序唯一的参数是该信号的值，实时信号比其他信号携带更多的信息，通过设置```SA_SIGINFO```标志的实时信号处理程序格式如下；
+- 一些新函数定义为使用实时信号工作。
+```
+void func(int signo, siginfo_t *info, void *context);
+siginfo_t {
+    int      si_signo;     /* Signal number */
+    int      si_errno;     /* An errno value */
+    int      si_code;      /* Signal code */
+    int      si_trapno;    /* Trap number that caused
+                                hardware-generated signal
+                                (unused on most architectures) */
+    pid_t    si_pid;       /* Sending process ID */
+    uid_t    si_uid;       /* Real user ID of sending process */
+    int      si_status;    /* Exit value or signal */
+    clock_t  si_utime;     /* User time consumed */
+    clock_t  si_stime;     /* System time consumed */
+    sigval_t si_value;     /* Signal value */
+    int      si_int;       /* POSIX.1b signal */
+    void    *si_ptr;       /* POSIX.1b signal */
+    int      si_overrun;   /* Timer overrun count;
+                                POSIX.1b timers */
+    int      si_timerid;   /* Timer ID; POSIX.1b timers */
+    void    *si_addr;      /* Memory location which caused fault */
+    long     si_band;      /* Band event (was int in
+                                glibc 2.3.2 and earlier) */
+    int      si_fd;        /* File descriptor */
+    short    si_addr_lsb;  /* Least significant bit of address
+                                (since Linux 2.6.32) */
+    void    *si_call_addr; /* Address of system call instruction
+                                (since Linux 3.5) */
+    int      si_syscall;   /* Number of attempted system call
+                                (since Linux 3.5) */
+    unsigned int si_arch;  /* Architecture of attempted system call
+                                (since Linux 3.5) */
+}
+
+```
+
+### 2.2.3 示例程序
+#### 2.2.3.1 创建和销毁消息队列
+&emsp;&emsp;通过参数控制消息队列的创建和删除，基本格式为```cmd c name```，其中c可以为```c或者d```分别表示创建和删除，```name```为消息队列，比如```/message```，该文件会存放在```/dev/mqueue```。
+```c
+//获取2个参数
+//c 表示创建消息队列 d表示删除消息队列
+//第二个参数为消息队列的路径
+void handle_msg(int argc, char **argv)
+{
+    if(argc != 3)
+        err_exit(NULL, -1);
+    
+    mqd_t fd = 0;
+    int flag = O_RDWR | O_CREAT;
+    char ch = argv[1][0];
+    switch(ch)
+    {
+    case 'c':
+        fd = lmq_open(argv[2], flag, 666,NULL); ///dev/mqueue/
+        lmq_close(fd);
+        break;
+    case 'd':
+        lmq_unlink(argv[2]);
+        break;
+    default:
+        err_exit("unknown parameters!", -1);
+    }
+    
+}
+```
+
+&emsp;&emsp;执行结果如下：
+```bash
+➜  build git:(master) ✗ ./main c /oppo
+➜  build git:(master) ✗ ll /dev/mqueue/     
+total 0
+--w--wx--T 1 grayondream grayondream 80 9月   3 14:59 oppo
+➜  build git:(master) ✗ ./main d /oppo 
+➜  build git:(master) ✗ ll /dev/mqueue/
+total 0
+➜  build git:(master) ✗
+```
+
+#### 2.2.3.2 单服务器单客户端同步通信
+&emsp;&emsp;下面的程序通过参数控制当前进程是服务器还是客户端，基本命令格式为```cmd [c/s] name```，第二个参数```c,s```分别指代客户端还是服务器，```name```为消息队列的名称。基本功能为客户端启动之后读取标准输入，标准输入的格式为优先级+空格+消息，优先级占两位（纯粹为了编码方便，懒得再处理），将消息写入到消息队列中，之后启动服务端读取消息。
+```c
+//程序分为客户端和服务端，客户端发送数据，服务端接受数据
+//接受2个参数，第一个c或者s表示客户端和服务端，第二个参数指定消息队列的文件名
+void ipc_mq(int argc, char **argv)
+{
+    if(argc != 3)
+        err_exit(NULL, -1);
+    
+    mqd_t fd = 0;
+    int flag = 0;
+    int mode = FILE_MODE;
+    char ch = argv[1][0];
+    char buff[MAX_LEN] = {0};
+    int len = 0;
+    int prior = 20;
+    switch(ch)
+    {
+    case 'c':
+        flag = O_CREAT | O_WRONLY;
+        fd = lmq_open(argv[2], flag, mode, NULL);
+        //输入的前两位为消息的优先级
+        //输入的格式为优先级+空格+消息
+        while(lfgets(buff, MAX_LEN, stdin) != NULL)
+        {
+            buff[2] = '\0';
+            prior = atoi(buff);
+            char *msg = buff + 3;
+            len = strlen(msg);
+            if(msg[len - 1] == '\n')
+                len--;
+            msg[len] = '\0';
+            lmq_send_msg(fd, msg, len, prior);
+        }
+        break;
+    case 's':
+        flag = O_RDONLY;
+        fd = lmq_open(argv[2], flag, mode, NULL);
+        struct mq_attr attr;
+        lmq_getattr(fd, &attr);
+        printf("message size %d, max message %d\n", attr.mq_msgsize, attr.mq_maxmsg);
+        while((len = lmq_receive_msg(fd, buff, attr.mq_msgsize, &prior)) > 0)
+        {
+            printf(buff);
+            printf(" ,prior is %d!\n", prior);
+        }
+        
+        break;
+    }
+    
+    lmq_close(fd);
+}
+```
+&emsp;&emsp;先启动客户端写入消息：
+```bash
+➜  build git:(master) ✗ ./main c /message
+➜  build git:(master) ✗ ./main c /message
+15 1
+15 2
+14 3
+18 4
+```
+&emsp;&emsp;随后启动服务端可以看到：
+```bash
+➜  build git:(master) ✗ ./main s /message
+message size 8192, max message 10
+4 ,prior is 18!
+1 ,prior is 15!
+2 ,prior is 15!
+3 ,prior is 14!
+```
+&emsp;&emsp;从上面可以看到优先返回优先级高的消息，优先级不同则优先返回最早的消息。同时消息队列获取消息默认是阻塞的。
+
+#### 2.2.3.3 消息队列简单的信号通知
+&emsp;&emsp;下面的程序通过参数控制当前进程是服务器还是客户端，基本命令格式为```cmd [c/s] name```，第二个参数```c,s```分别指代客户端还是服务器，```name```为消息队列的名称。基本功能为客户端启动之后读取标准输入，标准输入的格式为优先级+空格+消息，优先级占两位（纯粹为了编码方便，懒得再处理），将消息写入到消息队列中，之后启动服务端读取消息。
+```c
+mqd_t sg_mq;
+struct sigevent sg_ev;
+struct mq_attr sg_attr;
+//信号处理函数
+static void single_mq_handle(int sig_no)
+{
+    printf("the program come into the handler!\n");
+    //这个函数并不是异步信号安全的函数
+    char buff[MAX_LEN];
+    int prior;
+    lmq_receive_msg(sg_mq, buff, sg_attr.mq_msgsize, &prior);
+    printf("receive singale and the buffer is %s, and the prior is %d!\n", buff, prior);
+    lmq_notify(sg_mq, &sg_ev);         //再次注册
+}
+
+//程序分为客户端和服务端，客户端发送数据，服务端接受数据
+//接受三个参数，第一个c或者s表示客户端和服务端，第二个参数指定消息队列的文件名
+void single_mq_test(int argc, char **argv)
+{
+    if(argc != 3)
+        err_exit(NULL, -1);
+    
+    int flag = 0;
+    int mode = FILE_MODE;
+    char ch = argv[1][0];
+    char buff[MAX_LEN] = {0};
+    int len = 0;
+    int prior = 20;
+    switch(ch)
+    {
+    case 'c':
+        flag = O_CREAT | O_WRONLY;
+        sg_mq = lmq_open(argv[2], flag, mode, NULL);
+        //输入的前两位为消息的优先级
+        //输入的格式为优先级+空格+消息
+        lfgets(buff, MAX_LEN, stdin);
+        
+        buff[2] = '\0';
+        prior = atoi(buff);
+        char *msg = buff + 3;
+        len = strlen(msg);
+        
+        if(msg[len - 1] == '\n')
+            len--;
+        msg[len] = '\0';
+        lmq_send_msg(sg_mq, msg, len, prior);
+        
+        break;
+    case 's':
+        flag = O_RDONLY;
+        sg_mq = lmq_open(argv[2], flag, mode, NULL);
+        lmq_getattr(sg_mq, &sg_attr);
+        lsignal(SIGUSR1, single_mq_handle);
+        sg_ev.sigev_signo = SIGUSR1;
+        sg_ev.sigev_notify = SIGEV_SIGNAL;
+        lmq_notify(sg_mq, &sg_ev);
+        for(;;)
+            pause();
+        break;
+    }
+    
+    lmq_close(sg_mq);
+}
+```
+&emsp;&emsp;运行结果如下：
+```bash
+➜  build git:(master) ✗ ./main c /rrrr
+02 1111111111111111111111111
+➜  build git:(master) ✗ ./main c /rrrr
+03 22222222222222222222222222
+```
+
+```bash
+➜  build git:(master) ✗ ./main s /rrrr
+the program come into the handler!
+receive singale and the buffer is 1111111111111111111111111, and the prior is 2!
+the program come into the handler!
+receive singale and the buffer is 22222222222222222222222222, and the prior is 3!
+```
+
+&emsp;&emsp;如果另外开一个进程：
+```bash
+➜  build git:(master) ✗ ./main s /rrrr
+errno is 16,register the singal event failed!   
+```
+&emsp;&emsp;```#define	EBUSY		16	/* Device or resource busy *```可以看到一个消息队列同时只能被一个进程注册。
+#### 2.2.3.4 异步安全的消息队列信号通知
+&emsp;&emsp;这个例子是上个例子的改版，区别是保证信号异常安全。因为```mq_receive```等函数并不是信号异常安全的，如果正在执行操作被其他信号中断则会出现不可预测的现象，而利用原子性的标志位可以保证这一点。
+```c
+volatile sig_atomic_t sig_mask = 0;
+//信号处理函数
+static void safe_single_mq_handle(int sig_no)
+{
+    sig_mask = 1;
+}
+
+//程序分为客户端和服务端，客户端发送数据，服务端接受数据
+//接受三个参数，第一个c或者s表示客户端和服务端，第二个参数指定消息队列的文件名
+void safe_single_mq_test(int argc, char **argv)
+{
+    if(argc != 3)
+        err_exit(NULL, -1);
+    
+    mqd_t mq;
+    int flag = 0;
+    int mode = FILE_MODE;
+    char ch = argv[1][0];
+    char buff[MAX_LEN] = {0};
+    int len = 0;
+    int prior = 20;
+    switch(ch)
+    {
+    case 'c':
+        flag = O_CREAT | O_WRONLY;
+        mq = lmq_open(argv[2], flag, mode, NULL);
+        //输入的前两位为消息的优先级
+        //输入的格式为优先级+空格+消息
+        lfgets(buff, MAX_LEN, stdin);
+        
+        buff[2] = '\0';
+        prior = atoi(buff);
+        char *msg = buff + 3;
+        len = strlen(msg);
+        
+        if(msg[len - 1] == '\n')
+            len--;
+        msg[len] = '\0';
+        lmq_send_msg(mq, msg, len, prior);
+        
+        break;
+    case 's':
+        flag = O_RDONLY;
+        struct sigevent ev;
+        struct mq_attr attr;
+        sigset_t new_set, old_set, zero_set;
+        
+        __sigemptyset(&new_set);
+        __sigemptyset(&old_set);
+        __sigemptyset(&zero_set);
+        __sigaddset(&new_set, SIGUSR1);
+        
+        mq = lmq_open(argv[2], flag, mode, NULL);
+        lmq_getattr(mq, &attr);
+        lsignal(SIGUSR1, safe_single_mq_handle);
+        ev.sigev_signo = SIGUSR1;
+        ev.sigev_notify = SIGEV_SIGNAL;
+        lmq_notify(mq, &ev);
+        for(;;)
+        {
+            lsigprocmask(SIG_BLOCK, &new_set, &old_set);
+            while(sig_mask == 0)
+                lsigsuspend(&zero_set);
+                
+            sig_mask = 0;
+            lmq_notify(mq, &ev);         //再次注册
+            char buff[MAX_LEN];
+            int prior;
+            int len = 0;
+            while((len = lmq_receive_msg(mq, buff, attr.mq_msgsize, &prior)) > 0)       //保证即便读取当前消息时，其他到来的消息也能读取到
+            {
+                printf("receive singale and the buffer is %s, and the prior is %d!\n", buff, prior);
+            }
+
+            lsigprocmask(SIG_UNBLOCK, &new_set, NULL);
+        }
+            
+        break;
+    }
+    
+    lmq_close(sg_mq);
+}
+```
+#### 2.2.3.5 通过管道实现异步安全
+&emsp;&emsp;这个依然是上个程序的改版，只不过是使用管道来实现异步安全，但是出现个问题，```select``本身是阻塞的，即便信号触发了好像也无法出发信号处理函数，即写管道就不成立，就无法触发```select```进行读，这个我自己测试有问题，不知道是不是作者使用的系统版本问题。
+```c
+int pipe_fd[2] = {0};
+static void safe_pipe_mq_handle(int sig)
+{
+    lwrite(pipe_fd[1], "", 1);
+}
+
+void safe_pipe_mq_test(int argc, char **argv)
+{
+    if(argc != 3)
+        err_exit(NULL, -1);
+    
+    mqd_t mq;
+    int flag = 0;
+    int mode = FILE_MODE;
+    char ch = argv[1][0];
+    char buff[MAX_LEN] = {0};
+    int len = 0;
+    int prior = 20;
+    struct sigevent ev;
+    struct mq_attr attr;
+    fd_set rset;
+    switch(ch)
+    {
+    case 'c':
+        flag = O_CREAT | O_WRONLY;
+        mq = lmq_open(argv[2], flag, mode, NULL);
+        //输入的前两位为消息的优先级
+        //输入的格式为优先级+空格+消息
+        lfgets(buff, MAX_LEN, stdin);
+        
+        buff[2] = '\0';
+        prior = atoi(buff);
+        char *msg = buff + 3;
+        len = strlen(msg);
+        
+        if(msg[len - 1] == '\n')
+            len--;
+        msg[len] = '\0';
+        lmq_send_msg(mq, msg, len, prior);
+        
+        break;
+    case 's':
+        flag = O_RDONLY;
+        
+        mq = lmq_open(argv[2], flag, mode, NULL);
+        lmq_getattr(mq, &attr);
+        lpipe(pipe_fd);
+        
+        
+        lsignal(SIGUSR1, safe_pipe_mq_handle);
+        ev.sigev_signo = SIGUSR1;
+        ev.sigev_notify = SIGEV_SIGNAL;
+        lmq_notify(mq, &ev);
+        
+        FD_ZERO(&rset);
+        for(;;)
+        {
+            FD_SET(pipe_fd[0], &rset);
+            int fds = lselect(pipe_fd[0] + 1, &rset, NULL, NULL, NULL);
+            if(FD_ISSET(pipe_fd[0], &rset))
+            {
+                char ch;
+                lread(pipe_fd[0], &ch, 1);
+                char buff[MAX_LEN];
+                int prior;
+                int len = 0;
+                while((len = lmq_receive_msg(mq, buff, attr.mq_msgsize, &prior)) > 0)       //保证即便读取当前消息时，其他到来的消息也能读取到
+                {
+                    printf("receive singale and the buffer is %s, and the prior is %d!\n", buff, prior);
+                }
+                
+                lmq_notify(mq, &ev);         //再次注册
+            }
+        }
+            
+        break;
+    }
+    
+    lmq_close(sg_mq);
+}
+```
+
+#### 2.2.3.6 新开线程实现数据读取
+&emsp;&emsp;这个很好理解就是信号触发时新开一个线程处理相应的工作。
+```c
+mqd_t thread_mq;
+
+struct mq_attr thread_mq_attr;
+struct sigevent thread_mq_sig;
+void safe_thread_mq_handle(int val)
+{
+    char buff[MAX_LEN];
+    int prior;
+    int len = 0;
+    while((len = lmq_receive_msg(thread_mq, buff, thread_mq_attr.mq_msgsize, &prior)) > 0)       //保证即便读取当前消息时，其他到来的消息也能读取到
+    {
+        printf("receive singale and the buffer is %s, and the prior is %d!\n", buff, prior);
+    }
+    
+    lmq_notify(thread_mq, &thread_mq_sig);         //再次注册
+}
+
+//启动一个线程来处理事件，异步读写
+void safe_thread_mq_test(int argc, char **argv)
+{
+    if(argc != 3)
+        err_exit(NULL, -1);
+    
+    int flag = 0;
+    int mode = FILE_MODE;
+    char ch = argv[1][0];
+    char buff[MAX_LEN] = {0};
+    int len = 0;
+    int prior = 20;
+    switch(ch)
+    {
+    case 'c':
+        flag = O_CREAT | O_WRONLY;
+        thread_mq = lmq_open(argv[2], flag, mode, NULL);
+        //输入的前两位为消息的优先级
+        //输入的格式为优先级+空格+消息
+        lfgets(buff, MAX_LEN, stdin);
+        
+        buff[2] = '\0';
+        prior = atoi(buff);
+        char *msg = buff + 3;
+        len = strlen(msg);
+        
+        if(msg[len - 1] == '\n')
+            len--;
+        msg[len] = '\0';
+        lmq_send_msg(thread_mq, msg, len, prior);
+        
+        break;
+    case 's':
+        flag = O_RDONLY;
+        
+        thread_mq = lmq_open(argv[2], flag, mode, NULL);
+        lpipe(pipe_fd);
+        lmq_getattr(thread_mq, &thread_mq_attr);
+        lsignal(SIGUSR1, safe_thread_mq_handle);
+        
+        thread_mq_sig.sigev_notify = SIGEV_THREAD;
+        thread_mq_sig.sigev_value.sival_ptr = NULL;
+        thread_mq_sig._sigev_un._sigev_thread._attribute = NULL;
+        thread_mq_sig._sigev_un._sigev_thread._function = safe_thread_mq_handle;
+        
+        lmq_notify(thread_mq, &thread_mq_sig);
+        
+        for(;;)
+        {
+            pause();
+        }
+            
+        break;
+    }
+    
+    lmq_close(sg_mq);
+}
+```
+#### 2.2.3.7 实时信号示例
+&emsp;&emsp;父进程针对每个信号发送两组数据然后计数，等待一会儿只有紫禁城获取信号调用信号处理函数接收数据。
+```c
+void sig_test(int argc, char **argv)
+{
+    printf("SIGRTMIN=%d, SIGRTMAX=%d\n", (int)(SIGRTMIN), (int)(SIGRTMAX));
+    pid_t pid;
+    pid = fork();
+    
+    if(pid == 0)
+    {
+        sigset_t newset;
+        
+        sigemptyset(&newset);
+        sigaddset(&newset, SIGRTMAX);
+        sigaddset(&newset, SIGRTMAX - 1);
+        sigaddset(&newset, SIGRTMAX - 2);
+        sigprocmask(SIG_BLOCK, &newset, NULL);
+        
+        lsig_rt(SIGRTMAX, sig_handle, &newset);
+        lsig_rt(SIGRTMAX - 1, sig_handle, &newset);
+        lsig_rt(SIGRTMAX - 2, sig_handle, &newset);
+        
+        sleep(6);
+        sigprocmask(SIG_UNBLOCK, &newset, NULL);
+        sleep(3);
+        return ;
+    }
+    else
+    {
+        /* code */
+        sleep(3);
+        union sigval val;
+        for(int i = SIGRTMAX;i >= SIGRTMAX - 2;i--)
+        {
+            for(int j = 0;j <= 2;j ++)
+            {
+                val.sival_int = j;
+                lsigqueue(pid, i, val);
+                printf("send signal = %d, val = %d\n", i, j);
+            }
+        }
+    }
+    
+    return 0;
+}
+```
+
+```c
+lsig_handle_t* lsig_rt(int signo, lsig_handle_t *func, sigset_t *mask)
+{
+    struct sigaction act, oact;
+    
+    act.sa_mask = *mask;
+    act.sa_flags = SA_SIGINFO;
+    act.sa_sigaction = func;
+    if(signo == SIGALRM)
+    {
+    #ifdef SA_RESTART
+        act.sa_flags |= SA_RESTART;
+    #endif
+    }
+    
+    int ret = sigaction(signo, &act, &oact);
+    ERROR_CHECK(ret, <, 0, signo, "set the signal %d handle function failed!");
+    return oact.sa_sigaction;
+}
+```
+
+```bash
+➜  build git:(master) ✗ ./main
+SIGRTMIN=34, SIGRTMAX=64
+send signal = 64, val = 0
+send signal = 64, val = 1
+send signal = 64, val = 2
+send signal = 63, val = 0
+send signal = 63, val = 1
+send signal = 63, val = 2
+send signal = 62, val = 0
+send signal = 62, val = 1
+send signal = 62, val = 2
+➜  build git:(master) ✗ received signal 62, code = -1, ival = 0
+received signal 62, code = -1, ival = 1
+received signal 62, code = -1, ival = 2
+received signal 63, code = -1, ival = 0
+received signal 63, code = -1, ival = 1
+received signal 63, code = -1, ival = 2
+received signal 64, code = -1, ival = 0
+received signal 64, code = -1, ival = 1
+received signal 64, code = -1, ival = 2
+```
+## 2.3 System V消息队列
+&emsp;&emsp;System V消息队列和Posix消息队列类似，会在内核中维护一个消息队列的链表，该链表的结构如下：
+```c
+
+```
+### 2.3.1 API
+
+### 2.3.2 示例
 ## 3 信号量

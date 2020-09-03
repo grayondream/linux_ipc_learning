@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <wait.h>
 #include <mqueue.h>
+#include <sys/select.h>
+#include <signal.h>
 #include "lsafe.h"
 
 void err_exit(const char *buff, int err_ret)
@@ -152,4 +154,61 @@ int lmq_receive_msg(mqd_t mq, char *ptr, int len, int *prior)
     int ret = mq_receive(mq, ptr, len, prior);
     ERROR_CHECK(ret, <, 0, mq, "receive message from %d failed!");
     return ret;
+}
+
+void lmq_notify(mqd_t mq, struct sigevent *ev)
+{
+    int ret = mq_notify(mq, ev);
+    ERROR_CHECK(ret, <, 0, mq, "register the singal event failed!");   
+}
+
+__sighandler_t lsignal(int __sig, __sighandler_t __handler)
+{
+    __sighandler_t ret = signal(__sig, __handler);
+    ERROR_CHECK(ret, ==, SIG_ERR, __sig, "register singal %d handler failed!");
+    return ret;
+}
+
+void lsigprocmask(int how, const sigset_t *set, sigset_t *oldset)
+{
+    int ret = sigprocmask(how, set, oldset);
+    ERROR_CHECK(ret, <, 0, how, "process the singal %d failed!");
+}
+
+void lsigsuspend(const sigset_t *mask)
+{
+    int ret = sigsuspend(mask);
+    ERROR_CHECK(ret, <, 0, mask, "suspend the singal %d failed!");
+}
+
+int lselect(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout)
+{
+    int ret = select(nfds, readfds, writefds, exceptfds, timeout);
+    ERROR_CHECK(ret, < , 0, nfds, "listen %d failed!");
+    return ret;
+}
+
+lsig_handle_t* lsig_rt(int signo, lsig_handle_t *func, sigset_t *mask)
+{
+    struct sigaction act, oact;
+    
+    act.sa_mask = *mask;
+    act.sa_flags = SA_SIGINFO;
+    act.sa_sigaction = func;
+    if(signo == SIGALRM)
+    {
+    #ifdef SA_RESTART
+        act.sa_flags |= SA_RESTART;
+    #endif
+    }
+    
+    int ret = sigaction(signo, &act, &oact);
+    ERROR_CHECK(ret, <, 0, signo, "set the signal %d handle function failed!");
+    return oact.sa_sigaction;
+}
+
+void lsigqueue(pid_t pid, int sig, const union sigval value)
+{
+    int ret = sigqueue(pid, sig, value);
+    ERROR_CHECK(ret, <, 0, sig, "send signal %d failed!");
 }
