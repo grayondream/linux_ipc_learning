@@ -11,12 +11,12 @@
 #include <sys/select.h>
 #include <signal.h>
 #include "lsafe.h"
+#include <sys/msg.h>
+#include <sys/ipc.h>
 
 void err_exit(const char *buff, int err_ret)
 {
-    fprintf(stderr, buff);   
-    fprintf(stderr, "\n");   
-    
+    perror(buff);  
     _exit(err_ret);
 }
 
@@ -211,4 +211,40 @@ void lsigqueue(pid_t pid, int sig, const union sigval value)
 {
     int ret = sigqueue(pid, sig, value);
     ERROR_CHECK(ret, <, 0, sig, "send signal %d failed!");
+}
+
+int lmsgget(key_t key, int msgflg)
+{
+    int ret = msgget(key, msgflg);
+    ERROR_CHECK(ret, <, 0, key, "open the message queue %d failed!");
+    return ret;
+}
+
+void lmsgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg)
+{
+    int ret = msgsnd(msqid, msgp, msgsz, msgflg);
+    ERROR_CHECK(ret, <, 0, msqid, "send data into %d failed!");
+}
+
+ssize_t lmsgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg)
+{
+    int ret = msgrcv(msqid, msgp, msgsz, msgtyp, msgflg);
+    ERROR_CHECK(ret, <, 0, msqid, "read data from queue %d failed!");
+    return ret;
+}
+
+/*
+void lmsgctl(int msqid, int cmd, struct msqid_ds *buf)
+{
+    int ret = msgctl(msqid, cmd, buf);
+    ERROR_CHECK(ret, <, 0, msqid, "control the queue %d failed!");
+}
+
+*/
+
+key_t lftok(const char *pathname, int proj_id)
+{
+    key_t ret = ftok(pathname, proj_id);
+    ERROR_CHECK(ret, <, 0, pathname, "get the token for %s failed!");
+    return ret;
 }

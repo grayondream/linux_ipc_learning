@@ -1,3 +1,6 @@
+#ifndef __LSAFE_H__
+#define __LSAFE_H__
+
 #include <unistd.h>
 #include <stdio.h>
 #include <mqueue.h>
@@ -8,13 +11,11 @@
 #define MAX_LEN 1024
 #define FILE_MODE S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP 
 
-
 void err_exit(const char *buff, int err_ret);
 #define ERROR_CHECK(ret, op, failed, val, desc)  if((ret) op (failed))\
                                               {\
                                               char (buff)[MAX_LEN] = {0};\
                                               snprintf((buff), MAX_LEN, (desc), (val));\
-                                              fprintf(stderr, "errno is %d,", errno);     \
                                               err_exit((buff), (ret));\
                                               }
 /*
@@ -53,3 +54,21 @@ int lselect(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, stru
 typedef void (*lsig_handle_t)(int signo, siginfo_t *info, void *context);
 lsig_handle_t* lsig_rt(int signo, lsig_handle_t *func, sigset_t *mask);
 void lsigqueue(pid_t pid, int sig, const union sigval value);
+
+/*
+ * System V消息队列
+ */
+ typedef struct mymsg_buf
+{
+    long type;
+    int len;
+    char data[MAX_LEN];
+}mymsg_buf;
+
+int lmsgget(key_t key, int msgflg);
+void lmsgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg);
+ssize_t lmsgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg);
+void lmsgctl(int msqid, int cmd, struct msqid_ds *buf);
+key_t lftok(const char *pathname, int proj_id);
+
+#endif

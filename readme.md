@@ -1117,7 +1117,7 @@ int msgget(key_t key, int msgflg);
 ```
 &emsp;&emsp;创建或者打开一个消息队列：
 - ```key```：一个键值，可以使```IPC_PRIVATE```也可以是```ftok```获取的键值；
-- ```msgflg```：读写权限；
+- ```msgflg```：读写权限，它们的用法和创建文件时使用的mode模式标志是一样的；
 - 返回值：-1表示失败，否则为队列的标识符。
 
 ```c
@@ -1173,6 +1173,271 @@ int msgctl(int msqid, int cmd, struct msqid_ds *buf);
   - ```IPC_RMID```：删除消息队列，所有消息将被抛弃；
   - ```IPC_STAT```：获取消息队列的参数存放到buf中；
   - ```IPC_SET```：给所指定的消息队列设置buf中设置的四个参数```msg_perm.uid,msg_perm.gid,mode,msg_qbytes```。
+- 返回值-1失败，其他成功。
 
+&emsp;&emsp;限制，可以通过下面的命令分别查看系统允许的每个消息的最大字节数，任何一个消息队列上的最大字节数，系统范围内的最大消息队列数。
+```bash
+➜  ipc git:(master) ✗ cat /proc/sys/kernel/msgmax
+8192
+➜  ipc git:(master) ✗ cat /proc/sys/kernel/msgmnb
+16384
+➜  ipc git:(master) ✗ cat /proc/sys/kernel/msgmni
+32000
+```
 ### 2.3.2 示例
-## 3 信号量
+#### 2.3.2.1 客户端服务端简单通信
+&emsp;&emsp;程序的功能很简单就是客户端从标准输入读取消息类型和消息然后发送给服务端，服务端再向客户端返回ACK，不断循环。
+```c
+//客户端发送的消息中格式为：消息类型+空格+消息，消息类型占2位
+void vmsg_base_client(int readfd, int writefd)
+{
+    char buff[MAX_LEN] = {0};
+    while(lfgets(buff, MAX_LEN, stdin))
+    {
+        int len = strlen(buff);
+        if(buff[len - 1] == '\n')
+            len--;
+        
+        buff[len] = '\0';
+        buff[2] = '\0';
+        int type = atoi(buff);
+        buff[2] = ' ';
+        mymsg_buf mymsg;
+        mymsg.len = strlen(buff);
+        memset(mymsg.data, 0, MAX_LEN);
+        memmove(mymsg.data, buff, mymsg.len);
+        mymsg.type = 20;
+        lmsgsnd(writefd, &(mymsg.type), sizeof(mymsg.len) + mymsg.len, 0);
+        
+        //接受服务端的ack
+        memset(mymsg.data, 0, MAX_LEN);
+        len = lmsgrcv(readfd, &(mymsg.type), MAX_LEN, type, 0);
+        printf("ack from server:type=%d, msg=%s", mymsg.type, mymsg.data);
+        
+        printf("\n");
+    }
+}
+
+void vmsg_base_server(int readfd, int writefd)
+{
+    mymsg_buf buf;
+    while(lmsgrcv(readfd, &buf.type, MAX_LEN, 20, 0))
+    {
+        if(buf.data[buf.len] == '\n')
+            buf.len--;
+        
+        buf.data[buf.len] = '\0';
+        printf("read data from client: type=%d, msg=%s\n", buf.type, buf.data);
+        
+        buf.data[2] = '\0';
+        int type = atoi(buf.data);
+        memset(buf.data, 0, MAX_LEN);
+        memmove(buf.data, "ACK ", 4);
+        buf.type = type;
+        buf.len = strlen(buf.data);
+        lmsgsnd(writefd, &(buf.type), sizeof(buf.len) + buf.len, 0);
+    }
+}
+
+//客户端从标准输入读取消息发送给服务端，服务端读取到消息之后回显并给客户端发送确认信息，客户端收到后回显
+//很明显的是当前的流程是同步的，如果客户端收不到服务端的ack或者服务端收不到客户端的消息都会阻塞
+void vmsg_base_test(int argc, char **argv)
+{   
+    if(argc != 4)
+    {
+        err_exit(NULL, -1);
+    }
+    
+    char ch = argv[1][0];
+    char *read_name = argv[2];
+    char *write_name = argv[3];
+    unsigned long flag = IPC_CREAT | SVMSG_MODE;    //SVMSG_MODE=0666
+    key_t readkey = lftok(read_name, 0);
+    key_t writekey = lftok(write_name, 0);
+    
+    int readfd = lmsgget(readkey, flag);
+    int writefd = lmsgget(writekey, flag);
+    printf("message queue readkey=%d, writekey=%d, readfd=%d, writefd=%d\n", readkey, writekey, readfd, writefd);
+    switch(ch)
+    {
+    case 'c':
+        vmsg_base_client(readfd, writefd);
+        break;
+    case 's':
+        vmsg_base_server(readfd, writefd);
+        break;
+    }
+}
+```
+&emsp;&emsp;执行结果如下，需要注意的是System V消息队列需要提前创建文件，并且如果之前创建成功但是读取失败的消息队列，如果再次进行打开读取可能会失败，显示权限不足：
+```bash
+➜  build git:(master) ✗ touch tmp/c
+➜  build git:(master) ✗ touch tmp/s
+➜  build git:(master) ✗ ./main c tmp/s tmp/c
+message queue readkey=402440, writekey=436367, readfd=163845, writefd=131076
+02 1111111111111111111
+ack from server:type=2, msg=ACK 
+33 i want to send a message
+ack from server:type=33, msg=ACK 
+```
+
+```bash
+➜  build git:(master) ✗ ./main s tmp/c tmp/s
+message queue readkey=436367, writekey=402440, readfd=131076, writefd=163845
+read data from client: type=20, msg=02 1111111111111111111
+read data from client: type=20, msg=33 i want to send a message
+```
+
+&emsp;&emsp;可以通过命令```ipcs -q```查看消息队列，```ipcrm```删除消息队列：
+```bash
+➜  ~ ipcs -q
+
+------ Message Queues --------
+key        msqid      owner      perms      used-bytes   messages    
+0xffffffff 0          grayondrea 0          0            0           
+0x0006a84f 32769      grayondrea 0          0            0           
+0x0006a856 65538      grayondrea 0          0            0           
+0x0006a68a 98307      grayondrea 644        16           2           
+0x0006a88f 131076     grayondrea 644        0            0           
+0x00062408 163845     grayondrea 644        0            0  
+```
+#### 2.3.2.2 多进程客户端服务器通信
+&emsp;&emsp;每个客户端拥有一个自身的独一无二的消息队列，通过公开的服务端的消息队列向服务端发送消息。服务端接收到消息之后开启一个进程并向客户端发送ACK。
+```c
+#define SERVER_TYPE 20
+//通过信号处理程序实现客户端和服务端异步的响应
+//每个客户端有一个私人的消息队列，客户端创建队列之后按照格式：消息队列编号+空格+消息类型+空格+消息的格式向服务端发送消息
+void vmsg_sig_client(int readfd, int writefd)
+{
+    char buff[MAX_LEN] = {0};
+    lfgets(buff, MAX_LEN, stdin);        
+    int len = strlen(buff);
+    if(buff[len - 1] == '\n')
+        len--;
+    
+    //解析消息类型
+    buff[len] = '\0';
+    buff[2] = '\0';
+    int type = atoi(buff);
+    buff[2] = ' ';
+    
+    //格式为 from [readfd] to [writefd] [msg]
+    char send_msg[MAX_LEN] = {0};
+    sprintf(send_msg, "from %d to %d %s", readfd, writefd, buff);
+    
+    mymsg_buf mymsg;
+    mymsg.len = strlen(send_msg);
+    memset(mymsg.data, 0, MAX_LEN);
+    memmove(mymsg.data, send_msg, mymsg.len);
+    mymsg.type = SERVER_TYPE;
+    lmsgsnd(writefd, &(mymsg.type), sizeof(mymsg.len) + mymsg.len, 0);
+    
+    //接受服务端的ack
+    memset(mymsg.data, 0, MAX_LEN);
+    mymsg.type = type;
+    len = lmsgrcv(readfd, &(mymsg.type), MAX_LEN, mymsg.type, 0);
+    printf("ack from server:type=%d, msg=%s\n", mymsg.type, mymsg.data);
+}
+
+void sig_child(int signo)
+{
+    pid_t pid = 0;
+    int stat = 0;
+    while((pid = waitpid(-1, &stat, WNOHANG)) > 0)
+        ;
+    
+    return;
+}
+
+//每当有一个客户端发送了消息则服务端开启一个进程来处理该客户端的请求
+void vmsg_sig_server(int readfd, int writefd)
+{
+    for(;;)
+    {
+        lsignal(SIGCHLD, sig_child);
+        
+        mymsg_buf read_buf;
+        memset(read_buf.data, 0, MAX_LEN);
+        read_buf.type = SERVER_TYPE;
+        int len = lmsgrcv(readfd, &(read_buf.type), MAX_LEN, read_buf.type, 0);
+        printf(read_buf.data);
+        printf("\n");
+        
+        //解析客户端的id
+        int type = 0;
+        sscanf(read_buf.data, "from %d to %d %d %s", &writefd, &readfd, &type, NULL);   
+        pid_t id = lfork();
+        if(id == 0)         //子进程
+        {
+            memset(read_buf.data, 0, MAX_LEN);
+            memmove(read_buf.data, "ACK ", 4);
+            read_buf.type = type;
+            read_buf.len = strlen(read_buf.data);
+            //printf("send message!type=%d,len=%d writefd=%d\n", read_buf.type, read_buf.len, writefd);
+            lmsgsnd(writefd, &(read_buf.type), sizeof(read_buf.len) + read_buf.len, 0);
+        }
+        else
+        {
+            
+        }
+        
+    }
+}
+
+//第二个参数表示当前进程是服务端还是客户端，c/s
+//第三个参数为服务端的消息队列描述
+void vmsg_sig_test(int argc, char **argv)
+{
+    if(argc != 3)
+    {
+        err_exit(NULL, -1);
+    }
+    
+    char ch = argv[1][0];
+    char *server_name = argv[2];
+    unsigned long flag = IPC_CREAT | SVMSG_MODE;    //SVMSG_MODE=0666
+    key_t serverkey = lftok(server_name, 0);
+    int clientfd = 0;
+    
+    int serverfd = lmsgget(serverkey, flag);
+    printf("message queue serverkey=%d, serverfd=%d\n", serverkey, serverfd);
+    switch(ch)
+    {
+    case 'c':
+        clientfd = lmsgget(IPC_PRIVATE, flag);
+        vmsg_sig_client(clientfd, serverfd);
+        break;
+    case 's':
+        vmsg_sig_server(serverfd, 0);
+        break;
+    }
+}
+```
+
+&emsp;&emsp;效果如下：
+```bash
+➜  build git:(master) ✗ touch server
+➜  build git:(master) ✗ ./main s ./server
+message queue serverkey=436296, serverfd=917527
+from 950296 to 917527 1  23456789
+from 983065 to 917527 2  haaaaaaaaaaaaaa
+```
+
+```bash
+➜  build git:(master) ✗ ./main c ./server
+message queue serverkey=436296, serverfd=917527
+1 123456789
+ack from server:type=1, msg=ACK 
+➜  build git:(master) ✗ ./main c ./server
+message queue serverkey=436296, serverfd=917527
+2 whaaaaaaaaaaaaaa
+ack from server:type=2, msg=ACK 
+```
+
+&emsp;&emsp;以上的场景也可以使用```select或者poll```来实现。
+
+# 3 同步
+## 3.1 互斥锁
+&emsp;&emsp;互斥锁（Mutual exclusion，缩写 Mutex）是一种用于多线程编程中，防止两条线程同时对同一公共资源（比如全局变量）进行读写的机制。该目的通过将代码切片成一个一个的临界区域（critical section）达成。临界区域指的是一块对公共资源进行访问的代码，并非一种机制或是算法。一个程序、进程、线程可以拥有多个临界区域，但是并不一定会应用互斥锁。
+
+## 3.2 信号量

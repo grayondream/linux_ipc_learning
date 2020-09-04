@@ -1,3 +1,6 @@
+#ifndef __MYPOS_MSG_H__
+#define __MYPOS_MSG_H__
+
 #include "lsafe.h"
 #include <signal.h>
 
@@ -13,3 +16,5 @@ void safe_thread_mq_test(int argc, char **argv);
 void sig_handle(int signo, siginfo_t *info, void *context);
 void sig_test(int argc, char **argv);
 void posix_msg_test_main(int argc, char** argv);
+
+#endif 
