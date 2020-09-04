@@ -1438,6 +1438,243 @@ ack from server:type=2, msg=ACK
 
 # 3 同步
 ## 3.1 互斥锁
+### 3.1.1 简介
 &emsp;&emsp;互斥锁（Mutual exclusion，缩写 Mutex）是一种用于多线程编程中，防止两条线程同时对同一公共资源（比如全局变量）进行读写的机制。该目的通过将代码切片成一个一个的临界区域（critical section）达成。临界区域指的是一块对公共资源进行访问的代码，并非一种机制或是算法。一个程序、进程、线程可以拥有多个临界区域，但是并不一定会应用互斥锁。
+&emsp;&emsp;互斥锁用于保护保护临界区的原子性访问。虽说互斥锁保护的是临界区，但是实际上保护的是临界区的数据。
+```c
+/* Initialize a mutex.  */
+int pthread_mutex_init (pthread_mutex_t *__mutex, const pthread_mutexattr_t *__mutexattr);  //初始化互斥锁
+/* Destroy a mutex.  */
+int pthread_mutex_destroy (pthread_mutex_t *__mutex);       //销毁一个互斥锁
+/* Try locking a mutex.  */
+int pthread_mutex_trylock (pthread_mutex_t *__mutex);       //尝试获得互斥锁
+/* Lock a mutex.  */
+int pthread_mutex_lock (pthread_mutex_t *__mutex);          //加锁
+int pthread_mutex_unlock (pthread_mutex_t *__mutex)         //解锁
+int pthread_mutex_attr_*                                    //mutex属性操作的一系列函数
+```
+&emsp;&emsp;```pthread_mutex_t```是互斥锁的原型,该互斥锁的初始化方式分为两种：
+- 如果该锁为静态变量，则可初始化为```PTHREAD_MUTEX_INITIALIZER```；
+- 普通变量需要调用```pthread_mutex_init```进行初始化。
 
+&emsp;&emsp;```pthread_mutexattr_t```是希望设置的互斥锁的属性原型。互斥锁锁的基本格式为：
+```c
+pthread_mutex_lock(mutex);
+//临界区代码
+pthread_mutex_unlock(mutex);
+```
+&emsp;&emsp;如果一个线程尝试锁住已经被锁住的锁则会阻塞直到该锁被释放。一般可以使用```pthread_mutex_trylock```是锁的非阻塞函数，如果该锁已经被锁则返回一个```EBUSY```错误。这几个函数的返回值与一般的API的返回值类似：-1表示失败，0表示成功，其他值为错误码。
+
+### 3.1.2 生产者-消费者模型
+&emsp;&emsp;生产者消费者问题（英语：Producer-consumer problem），也称有限缓冲问题（英语：Bounded-buffer problem），是一个多进程同步问题的经典案例。该问题描述了共享固定大小缓冲区的两个进程——即所谓的“生产者”和“消费者”——在实际运行时会发生的问题。生产者的主要作用是生成一定量的数据放到缓冲区中，然后重复此过程。与此同时，消费者也在缓冲区消耗这些数据。该问题的关键就是要保证生产者不会在缓冲区满时加入数据，消费者也不会在缓冲区中空时消耗数据。
+&emsp;&emsp;要解决该问题，就必须让生产者在缓冲区满时休眠（要么干脆就放弃数据），等到下次消费者消耗缓冲区中的数据的时候，生产者才能被唤醒，开始往缓冲区添加数据。同样，也可以让消费者在缓冲区空时进入休眠，等到生产者往缓冲区添加数据之后，再唤醒消费者。
+&emsp;&emsp;在多线程程序中可能存在资源竞争问题。一般是通过信号量和互斥锁来保证线程安全。
+
+
+```c
+#define MAX_LEN 256
+struct mutex_shared
+{
+    pthread_mutex_t mutex;
+    int buff[MAX_LEN];
+};
+
+
+void producer(void *arg)
+{
+    struct mutex_shared *new_data = (struct mutex_shared *)(arg);
+    lpthread_mutex_lock(&(new_data->mutex));
+    int i = 0;
+    for(;i < MAX_LEN && new_data->buff[i] != -1;i ++)
+        ;
+        
+    if(i != MAX_LEN)
+    {
+        new_data->buff[i] = 1;
+        printf("produce %d into buffer!\n", i);
+    }
+    
+    lpthread_mutex_unlock(&(new_data->mutex));
+}
+
+void comsumer(void *arg)
+{
+    struct mutex_shared *new_data = (struct mutex_shared *)(arg);
+    lpthread_mutex_lock(&(new_data->mutex));
+    int i = 0;
+    for(;i < MAX_LEN && new_data->buff[i] == -1;i ++)
+        ;
+        
+    if(i != MAX_LEN)
+    {
+        new_data->buff[i] = -1;
+        printf("consume %d into buffer!\n", i);
+    }
+    
+    lpthread_mutex_unlock(&(new_data->mutex));
+}
+
+
+void pro_com_test(int argc, char **argv)
+{
+    const int produce_no = 10;
+    const int consume_no = 10;
+    pthread_t con_ths[consume_no];
+    pthread_t pro_ths[produce_no];
+    
+    struct mutex_shared data;
+    lpthread_mutex_init(&data.mutex, NULL);
+    memset(data.buff, -1, MAX_LEN);
+    
+    //创建线程
+    for(int i = 0;i < produce_no;i ++)
+    {
+        lpthread_create(&pro_ths[i], NULL, producer, &data);
+    }
+    
+    for(int i = 0;i < consume_no;i ++)
+    {
+        lpthread_create(&con_ths[i], NULL, comsumer, &data);
+    }
+    
+    //等待
+    for(int i = 0;i < produce_no;i ++)
+    {
+        lpthread_join(pro_ths[i], NULL);
+    }
+    
+    for(int i = 0;i < consume_no;i ++)
+    {
+        lpthread_join(con_ths[i], NULL);
+    }
+}
+```
 ## 3.2 信号量
+### 3.2.1 简介
+&emsp;&emsp;互斥锁用来保证临界区的原子性访问，而信号量则用来等待阻塞线程，当线程唤醒的条件满足时则唤醒线程。
+```c
+/* Initialize condition variable COND using attributes ATTR, or use
+   the default values if later is NULL.  */
+int pthread_cond_init (pthread_cond_t * __cond, const pthread_condattr_t * __cond_attr);
+/* Destroy condition variable COND.  */
+int pthread_cond_destroy (pthread_cond_t *__cond);
+/* Wake up one thread waiting for condition variable COND.  */
+int pthread_cond_signal (pthread_cond_t *__cond);
+/* Wake up all threads waiting for condition variables COND.  */
+int pthread_cond_broadcast (pthread_cond_t *__cond);
+/* Wait for condition variable COND to be signaled or broadcast.
+   MUTEX is assumed to be locked before.
+
+   This function is a cancellation point and therefore not marked with
+   __THROW.  */
+int pthread_cond_wait (pthread_cond_t * __cond, pthread_mutex_t * __mutex);
+/* Wait for condition variable COND to be signaled or broadcast until
+   ABSTIME.  MUTEX is assumed to be locked before.  ABSTIME is an
+   absolute time specification; zero is the beginning of the epoch
+   (00:00:00 GMT, January 1, 1970).
+
+   This function is a cancellation point and therefore not marked with
+   __THROW.  */
+int pthread_cond_timedwait (pthread_cond_t * __cond, pthread_mutex_t * __mutex, const struct timespec * __abstime);
+int pthread_cond_attr* //系列函数
+```
+- ```pthread_cond_init```：如果为静态函数则使用```PTHREAD_CONDA_INITIALIZER```初始化，否则用这个API初始化；
+- ```pthread_cond_destroy```：销毁条件变量；
+- ```pthread_conda_signal```：唤醒因为条件变量不满足而睡眠的线程；
+- ```pthread_conda_broadcast```：广播，唤醒一组条件变量的线程；
+- ```pthread_conda_wait```：线程睡眠等待条件变量满足；
+- ```pthread_cond_timewait```：条件变量设置超时；
+- ```pthread_conda_attr*```:属性相关操作函数。
+
+
+### 3.2.2 互斥同步
+&emsp;&emsp;使用条件变量改善上面的程序。需要注意的条件变量的核心是满足条件唤醒，不满足等待，而互斥锁的核心为锁。
+```c
+void cond_producer(void *arg)
+{
+    for(;;)
+    {
+        struct mutex_shared *new_data = (struct mutex_shared *)(arg);
+        lpthread_mutex_lock(&(new_data->mutex));
+        int i = 0;
+        for(;i < MAX_LEN && new_data->buff[i] != -1;i ++)
+            ;
+            
+        if(i != MAX_LEN)
+        {
+            new_data->buff[i] = 1;
+            if(new_data->n_ready == 0)
+            {
+                lpthread_cond_signal(&new_data->cond);
+            }
+            
+            new_data->n_ready ++;
+            printf("produce %d into buffer!\n", i);
+        }
+        
+        lpthread_mutex_unlock(&(new_data->mutex));
+    }
+}
+
+void cond_comsumer(void *arg)
+{
+    struct mutex_shared *new_data = (struct mutex_shared *)(arg);
+    lpthread_mutex_lock(&(new_data->mutex));
+    int i = 0;
+    for(;i < MAX_LEN && new_data->buff[i] == -1;i ++)
+        ;
+        
+    if(i != MAX_LEN)
+    {
+        if(new_data->n_ready == 0)
+        {
+            lpthread_cond_wait(&new_data->cond, &new_data->mutex);
+        }
+        
+        new_data->n_ready--;
+        new_data->buff[i] = -1;
+        printf("consume %d into buffer!\n", i);
+    }
+    
+    lpthread_mutex_unlock(&(new_data->mutex));
+}
+
+void pro_cond_test(int argc, char **argv)
+{
+    const int produce_no = 10;
+    const int consume_no = 10;
+    pthread_t con_ths[consume_no];
+    pthread_t pro_ths[produce_no];
+    
+    struct mutex_shared data;
+    data.n_ready = 0;
+    
+    lpthread_mutex_init(&data.mutex, NULL);
+    lpthread_cond_init(&data.cond, NULL);
+    memset(data.buff, -1, MAX_LEN);
+    
+    //创建线程
+    for(int i = 0;i < produce_no;i ++)
+    {
+        lpthread_create(&pro_ths[i], NULL, cond_producer, &data);
+    }
+    
+    for(int i = 0;i < consume_no;i ++)
+    {
+        lpthread_create(&con_ths[i], NULL, cond_comsumer, &data);
+    }
+    
+    //等待
+    for(int i = 0;i < produce_no;i ++)
+    {
+        lpthread_join(pro_ths[i], NULL);
+    }
+    
+    for(int i = 0;i < consume_no;i ++)
+    {
+        lpthread_join(con_ths[i], NULL);
+    }
+}
+```
+
+## 3.3 读写锁

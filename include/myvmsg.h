@@ -2,6 +2,7 @@
 #define __MYVMSG_H__
 
 #include <sys/msg.h>
+#include <pthread.h>
 
 #define MSG_R 0400 /* read permission */
 #define MSG_W 0200 /* write permission */

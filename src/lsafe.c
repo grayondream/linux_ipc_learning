@@ -248,3 +248,87 @@ key_t lftok(const char *pathname, int proj_id)
     ERROR_CHECK(ret, <, 0, pathname, "get the token for %s failed!");
     return ret;
 }
+
+void lpthread_mutex_init (pthread_mutex_t *__mutex, const pthread_mutexattr_t *__mutexattr)
+{
+    int ret = pthread_mutex_init(__mutex, __mutexattr);
+    ERROR_CHECK(ret, !=, 0, ret, "initialize mutex failed %d!");
+}
+
+void lpthread_mutex_destroy (pthread_mutex_t *__mutex)
+{
+    int ret = pthread_mutex_destroy(__mutex);
+    ERROR_CHECK(ret, !=, 0, ret, "destroy mutex failed %d!");
+}
+
+int lpthread_mutex_trylock (pthread_mutex_t *__mutex)
+{
+    int ret = pthread_mutex_trylock(__mutex);
+    //ERROR_CHECK(ret, !=, 0, ret, "initialize mutex failed %d!");
+    return ret;
+}
+
+void lpthread_mutex_lock (pthread_mutex_t *__mutex)
+{
+    int ret = pthread_mutex_lock(__mutex);
+    ERROR_CHECK(ret, !=, 0, ret, "lock mutex failed %d!");
+}
+
+void lpthread_mutex_unlock (pthread_mutex_t *__mutex)
+{
+    int ret = pthread_mutex_unlock(__mutex);
+    ERROR_CHECK(ret, !=, 0, ret, "unlock mutex failed %d!");
+}
+
+void lpthread_create (pthread_t * __newthread, const pthread_attr_t * __attr, void *(*__start_routine) (void *), void * __arg)
+{
+    int ret = pthread_create(__newthread, __attr, __start_routine, __arg);
+    ERROR_CHECK(ret, !=, 0, 0, "create thread failed!");
+}
+
+void lpthread_exit (void *__retval)
+{
+    pthread_exit(__retval);
+}
+
+int lpthread_join (pthread_t __th, void **__thread_return)
+{
+    int ret = pthread_join(__th, __thread_return);
+    ERROR_CHECK(ret, !=, 0, 0, "join thread failed!");
+}
+
+void lpthread_cond_init (pthread_cond_t * __cond, const pthread_condattr_t * __cond_attr)
+{
+    int ret = pthread_cond_init(__cond, __cond_attr);
+    ERROR_CHECK(ret, !=, 0, ret, "initialize conda failed!");
+}
+
+void lpthread_cond_destroy (pthread_cond_t *__cond)
+{
+    int ret = pthread_cond_destroy(__cond);
+    ERROR_CHECK(ret, !=, 0, ret, "destroy conda failed!");
+}
+
+void lpthread_cond_signal (pthread_cond_t *__cond)
+{
+    int ret = pthread_cond_signal(__cond);
+    ERROR_CHECK(ret, !=, 0, ret, "wake conda failed!");
+}
+
+void lpthread_cond_broadcast (pthread_cond_t *__cond)
+{
+    int ret = pthread_cond_broadcast(__cond);
+    ERROR_CHECK(ret, !=, 0, ret, "initialize conda failed!");
+}
+
+void lpthread_cond_wait (pthread_cond_t * __cond, pthread_mutex_t * __mutex)
+{
+    int ret = pthread_cond_wait(__cond, __mutex);
+    ERROR_CHECK(ret, !=, 0, ret, "initialize conda failed!");
+}
+
+void lpthread_cond_timedwait (pthread_cond_t * __cond, pthread_mutex_t * __mutex, const struct timespec * __abstime)
+{
+    int ret = pthread_cond_timedwait(__cond, __mutex, __abstime);
+    ERROR_CHECK(ret, !=, 0, ret, "initialize conda failed!");
+}

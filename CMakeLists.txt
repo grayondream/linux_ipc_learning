@@ -9,4 +9,4 @@ aux_source_directory(. MAIN_DIR)
 aux_source_directory(src SOURCE_DIR)
 
 add_executable(main ${MAIN_DIR} ${SOURCE_DIR})
-target_link_libraries(main rt)
+target_link_libraries(main rt pthread)

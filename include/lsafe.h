@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <signal.h>
+#include <pthread.h>
 
 #define MAX_LEN 1024
 #define FILE_MODE S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP 
@@ -70,5 +71,28 @@ void lmsgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg);
 ssize_t lmsgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg);
 void lmsgctl(int msqid, int cmd, struct msqid_ds *buf);
 key_t lftok(const char *pathname, int proj_id);
+
+
+/*
+ * 互斥锁
+ */
+void lpthread_mutex_init (pthread_mutex_t *__mutex, const pthread_mutexattr_t *__mutexattr);  //初始化互斥锁
+void lpthread_mutex_destroy (pthread_mutex_t *__mutex);       //销毁一个互斥锁
+int lpthread_mutex_trylock (pthread_mutex_t *__mutex);       //尝试获得互斥锁
+void lpthread_mutex_lock (pthread_mutex_t *__mutex);          //加锁
+void lpthread_mutex_unlock (pthread_mutex_t *__mutex);         //解锁
+void lpthread_create (pthread_t *__restrict __newthread, const pthread_attr_t *__restrict __attr, void *(*__start_routine) (void *), void *__restrict __arg);
+void lpthread_exit (void *__retval);
+int lpthread_join (pthread_t __th, void **__thread_return);
+
+/*
+ * 信号量
+ */
+void lpthread_cond_init (pthread_cond_t * __cond, const pthread_condattr_t * __cond_attr);
+void lpthread_cond_destroy (pthread_cond_t *__cond);
+void lpthread_cond_signal (pthread_cond_t *__cond);
+void lpthread_cond_broadcast (pthread_cond_t *__cond);
+void lpthread_cond_wait (pthread_cond_t * __cond, pthread_mutex_t * __mutex);
+void lpthread_cond_timedwait (pthread_cond_t * __cond, pthread_mutex_t * __mutex, const struct timespec * __abstime);
 
 #endif
