@@ -1,3 +1,4 @@
+&emsp;&emsp;《Unix网络编程：进程通信》阅读笔记。
 &emsp;&emsp;操作系统中每个进程都是独立的资源分配的最小单位，互相是隔离的。进程通信就是为了使得不同进程之间互相访问资源并进行协调工作。
 &emsp;&emsp;需要注意的是示例代码中所有以```l```开头的代码都是经过封装的库函数，和库函数的功能没有区别，比如:
 ```c
@@ -2001,3 +2002,377 @@ int lpthread_rwlock_wrlock(lpthread_rwlock_t *rwlock)
 ```
 
 ## 3.4 记录锁
+&emsp;&emsp;上面提到的互斥锁，读写锁很明显的一个特点是只能作用于同一进程中的不同线程之间的资源竞争，如果是多个进程则无能为力。比如如果当前进程希望读某个文件，但是另一个进程正在写文件就会造成读写冲突，不一致的现象。
+### 3.4.1 文件锁和记录锁
+&emsp;&emsp;文件锁或者记录锁本身就是由内核维护，保证不同进程之间也能够实现有效的资源同步或者竞争访问。
+&emsp;&emsp;文件上锁，顾名思义，即对整个文件进行上锁来保护文件的独占性-共享性。记录上锁，即对文件中的一部分内容进行上锁，只对该部分内容保护其独占性-共享性。文件上锁某种程度上就是记录上锁对整个文件的所有内容进行加锁的一种特例。简单举个例子就是：对于一个长为1024的文件，文件加锁就是对[0, 1023]全部范围加锁，而记录上锁就是对其中的子集[left, right]进行加锁(left和right可以自行指定)。
+&emsp;&emsp;文件上锁和记录上锁的优缺点相比很明显：记录上锁可以保证当进程访问文件的不同内容时，依然保证共享独占性；而文件上锁一旦一个文件占有文件，即便是当前进程不曾浸染的部分也是独占的。
+&emsp;&emsp;记录加锁的API为:
+```
+int fcntl(int fd, int cmd, ... /* arg */ );
+
+struct flock {
+    ...
+    short l_type;    /* Type of lock: F_RDLCK,
+                        F_WRLCK, F_UNLCK */
+    short l_whence;  /* How to interpret l_start:
+                        SEEK_SET, SEEK_CUR, SEEK_END */
+    off_t l_start;   /* Starting offset for lock */
+    off_t l_len;     /* Number of bytes to lock */
+    pid_t l_pid;     /* PID of process blocking our lock
+                        (set by F_GETLK and F_OFD_GETLK) */
+    ...
+};
+```
+&emsp;&emsp;```fcntl```我们一般用来修改文件的属性，也可以用来加锁。
+&emsp;&emsp;上述```flock```结构体不同成员的含义为：
+- ```l_type```：当前所的类型：
+    - ```F_RDLCK```：读锁；
+    - ```F_WRLCK```：写锁；
+    - ```F_UNLCK```：未加锁；
+- ```l_whence```：如何解释参数```l_start```的值：
+    - ```SEEK_SET```：相对于文件开头；
+    - ```SEEK_CUR```：相对于当前读写位置；
+    - ```SEEK_END```：相对于文件末尾；
+- ```l_start```：加锁的起始地址的偏移量，和```l_whence```一起解释；
+- ```l_en```：加锁的记录长度；
+- ```l_pid```：对当前文件加锁的pid，当获取锁信息时设置，不需要用户指定。
+
+&emsp;&emsp;```fcntl```API参数：
+- ```fd```：文件描述符;
+- ```cmd```：对于加锁该命令有三个取值：
+    - ```F_SETLK```：加锁或者释放锁，根据参数```arg```的成员操作，当前进程是非阻塞的，如果无法获得锁则返回```EACCES```或```EAGAIN```；
+    - ```F_SETLKW```：相对于```F_SETLK```是阻塞的；
+    - ```F_GETLK```：检查```arg```指定的锁确定是否存在已经存在一个指定的锁。
+
+&emsp;&emsp;需要注意的是发出```F_GETLK```之后紧接着发出```F_SETLK```的操作并不是原子的，因此无法因此来保证有效的无阻塞的获得锁。另外记录锁和读写锁类似是独占-共享的，即读共享，写独占。并且当进程关闭文件所有描述符或者进程本身终止时，所有关联的锁被删除，记录锁无法通过```fork```继承。
+&emsp;&emsp;示例如下：
+```c
+int lfcntl_lock(int fd, int cmd, int type, off_t start, int where, off_t len)
+{
+    struct flock arg;
+
+    arg.l_len = len;
+    arg.l_start = start;
+    arg.l_type = type;
+    arg.l_whence = where;
+    return fcntl(fd, cmd, &arg);
+}
+
+pid_t lfcntl_lockable(int fd, int type, off_t start, int where, off_t len)
+{
+    struct flock arg;
+
+    arg.l_len = len;
+    arg.l_start = start;
+    arg.l_type = type;
+    arg.l_whence = where;
+
+    int ret = fcntl(fd, F_GETLK, &arg);
+    if(ret == -1)
+        return ret;
+
+    if(arg.l_type == F_UNLCK)
+        return 0;
+
+    return ret;
+}
+
+#define lfcntl_rd_lock(fd, offset, where, len) lfcntl_lock(fd, F_SETLK, F_RDLCK, offset, where, len)
+#define lfcntl_rd_lockw(fd, offset, where, len) lfcntl_lock(fd, F_SETLKW, F_RDLCK, offset, where, len)
+#define lfcntl_wr_lock(fd, offset, where, len) lfcntl_lock(fd, F_SETLK, F_WRLCK, offset, where, len)
+#define lfcntl_wr_lockw(fd, offset, where, len) lfcntl_lock(fd, F_SETLKW, F_WRLCK, offset, where, len)
+#define lfcntl_unlock(fd, offset, where, len) lfcntl_lock(fd, F_SETLK, F_UNLCK, offset, where, len)
+
+//如果未上锁则返回0，上锁了则返回进程id
+#define lfcntl_rd_lockable(fd, offset, where, len) lfcntl_lockable(fd, F_RDLCK, offset, where, len)
+#define lfcntl_wr_lockable(fd, offset, where, len) lfcntl_lockable(fd, F_WRLCK, offset, where, len)
+
+void lock_file(int fd, int flag)
+{
+    if(!flag) return;
+    lfcntl_wr_lockw(fd, 0, SEEK_SET, 0);
+}
+
+void unlock_file(int fd, int flag)
+{
+    if(!flag) return;
+    lfcntl_unlock(fd, 0, SEEK_SET, 0);
+}
+
+void fcntl_test()
+{
+    char file[] = "/home/grayondream/altas/ipc/build/tmp";
+    pid_t pid = getpid();
+    int fd = open(file, O_RDWR, FILE_MODE);
+    char line[MAX_LEN] = {0};
+    int n = 0;
+    int flag = 0;
+    for(int i = 0;i < 20;i ++)
+    {
+        lock_file(fd, flag);
+        lseek(fd, 0, SEEK_SET);
+        int len = lread(fd, line, MAX_LEN);
+        line[len] = '\0';
+        len = sscanf(line, "%d\n", &n);
+        printf("pid = %d, no = %d\n", pid, n);
+        n++;
+
+        sprintf(line, "%d\n", n);
+        lseek(fd, 0, SEEK_SET);
+        lwrite(fd, line, MAX_LEN);
+
+        unlock_file(fd, flag);
+    }
+
+}
+```
+&emsp;&emsp;上面的示例为从文件中读取一个数字然后将数字加一再存入文件，flag为标志位，表示是否加锁。运行程序之间需要创建一个文件并写入一个数字，这里为1。未加锁的情况下面也看到了出现了读写不一致的情况。
+```bash
+➜  build git:(master) ✗ ./main & ./main
+[1] 13273
+pid = 13273, no = 1
+pid = 13274, no = 1
+pid = 13274, no = 2
+pid = 13274, no = 3
+pid = 13274, no = 4
+pid = 13274, no = 5
+pid = 13274, no = 6
+pid = 13274, no = 7
+pid = 13274, no = 8
+pid = 13274, no = 9
+pid = 13274, no = 10
+pid = 13274, no = 11
+pid = 13274, no = 12
+pid = 13274, no = 13
+pid = 13274, no = 14
+pid = 13274, no = 15
+pid = 13274, no = 16
+pid = 13274, no = 17
+pid = 13273, no = 2
+pid = 13274, no = 18
+pid = 13274, no = 19
+pid = 13273, no = 20
+pid = 13274, no = 20
+pid = 13273, no = 21
+pid = 13273, no = 22
+pid = 13273, no = 23
+pid = 13273, no = 24
+pid = 13273, no = 25
+pid = 13273, no = 26
+pid = 13273, no = 27
+pid = 13273, no = 28
+pid = 13273, no = 29
+pid = 13273, no = 30
+pid = 13273, no = 31
+pid = 13273, no = 32
+pid = 13273, no = 33
+pid = 13273, no = 34
+pid = 13273, no = 35
+pid = 13273, no = 36
+pid = 13273, no = 37
+```
+&emsp;&emsp;将flag修改为1之后，即加锁结果如下：
+```bash
+➜  build git:(master) ✗ ./main & ./main
+[1] 14266
+pid = 14266, no = 1
+pid = 14266, no = 2
+pid = 14266, no = 3
+pid = 14266, no = 4
+pid = 14266, no = 5
+pid = 14266, no = 6
+pid = 14266, no = 7
+pid = 14266, no = 8
+pid = 14266, no = 9
+pid = 14266, no = 10
+pid = 14266, no = 11
+pid = 14266, no = 12
+pid = 14266, no = 13
+pid = 14266, no = 14
+pid = 14266, no = 15
+pid = 14266, no = 16
+pid = 14266, no = 17
+pid = 14266, no = 18
+pid = 14266, no = 19
+pid = 14266, no = 20
+pid = 14267, no = 21
+[1]  + 14266 done       ./main
+pid = 14267, no = 22
+pid = 14267, no = 23
+pid = 14267, no = 24
+pid = 14267, no = 25
+pid = 14267, no = 26
+pid = 14267, no = 27
+pid = 14267, no = 28
+pid = 14267, no = 29
+pid = 14267, no = 30
+pid = 14267, no = 31
+pid = 14267, no = 32
+pid = 14267, no = 33
+pid = 14267, no = 34
+pid = 14267, no = 35
+pid = 14267, no = 36
+pid = 14267, no = 37
+pid = 14267, no = 38
+pid = 14267, no = 39
+pid = 14267, no = 40
+```
+
+### 3.4.2 劝告型上锁(建议锁)
+&emsp;&emsp;POSIX记录上锁也称劝告性上锁。共含义是内核维护着已由各个进程上锁的所有文件的正确信息，它不能防止一个进程写由另一个进程读锁定的某个文件，也不能防止一个进程读已由另一个进程写锁定的文件。一个进程能够无视劝告性锁而写一个读锁文件，或读一个写锁文件，前提时该进程有读或写该文件的足够权限。
+&emsp;&emsp;劝告性上锁对于协作进程足够。如网络编程中的协程，这些程序访问如序列号文件的共享资源，而且都在系统管理员的控制下，只要包含该序列号的真正文件不是任何进程都可写，那么在该文件被锁住期间，不理会劝告性锁的进程随意进程无法访问写它。
+&emsp;&emsp;每个使用文件的进程都要主动检查该文件是否有锁存在，当然都是通过具体锁的API，比如fctl记录锁F_GETTLK来主动检查是否有锁存在。如果有锁存在并被排斥，那么就主动保证不再进行接下来的IO操作。如果每一个进程都主动进行检查，并主动保证，那么就说这些进程都以一致性的方法处理锁，（这里的一致性方法就是之前说的两个主动）。但是这种一致性方法依赖于编写进程程序员的素质，也许有的程序员编写的进程程序遵守这个一致性方法，有的不遵守。不遵守的程序员编写的进程程序会怎么做呢？也许会不主动判断这个文件有没有加上文件锁或记录锁，就直接对这个文件进行IO操作。此时这种有破坏性的IO操作会不会成功呢？如果是在建议性锁的机制下，这种破坏性的IO就会成功。因为锁只是建议性存在的，并不强制执行。内核和系统总体上都坚持不使用建议性锁机制，它们依靠程序员遵守这个规定。(Linux默认锁为建议锁)
+
+### 3.4.3 强制型上锁
+&emsp;&emsp;对于强制性上锁，内核检查每个```read```和```write```请求，以验证其操作不会干扰由某个进程持有的某个锁，对于通常的时阻塞描述符，与某个强制性锁冲突的read和write将把调用进程投入睡眠，直到该锁释放为止，对于非阻塞描述符，与某个强制锁冲突的```read```和```write```将导致他们返回一个```EAGAIN```。
+&emsp;&emsp;为对某个特定的文件实行强制锁应满足:
+- 组成员执行位必须关掉；
+- SGID位必须打开。
+
+### 3.4.4 读写锁的优先级问题
+&emsp;&emsp;读写优先级需要面对两个问题：
+- 当资源已经被读锁占用，并且有一个写锁正在等待时，是否允许另一个读锁？这可能导致写饥饿；
+- 等待着的写和读的优先级如何？
+
+&emsp;&emsp;下面程序是对第一个问题的回答,下面的程序通过sleep交叉不同进程对锁的索取：
+```c
+void rd_wr_test()
+{
+    char file[] = "./1";
+    int fd = open(file, O_RDWR, FILE_MODE);
+    printf("%s : 父进程尝试拥有1个读锁\n", lget_time());
+    lfcntl_rd_lockw(fd, 0, SEEK_SET, 0);
+    printf("%s : 父进程拥有1个读锁\n", lget_time());
+    pid_t pid1;
+    pid_t pid2 = lfork();
+    if(pid2 == 0)
+    {
+        sleep(1);
+        printf("%s : 子进程1尝试拥有1个写锁\n", lget_time());
+        lfcntl_wr_lockw(fd, 0, SEEK_SET, 0);
+        printf("%s : 子进程1拥有1个写锁\n", lget_time());
+        sleep(2);
+        printf("%s : 子进程1释放了1个写锁\n", lget_time());
+        lfcntl_unlock(fd, 0, SEEK_SET, 0);
+        _exit(0);
+    }
+
+    pid1 = fork();
+    if(pid1 == 0)
+    {
+        sleep(3);
+        printf("%s : 子进程2尝试拥有1个读锁\n", lget_time());
+        lfcntl_rd_lockw(fd, 0, SEEK_SET, 0);
+        printf("%s : 子进程2拥有1个读锁\n", lget_time());
+        sleep(4);
+        printf("%s : 子进程2释放了1个读锁\n", lget_time());
+        lfcntl_unlock(fd, 0, SEEK_SET, 0);
+        _exit(0);
+    }
+
+    sleep(5);
+    printf("%s : 父进程释放了1个读锁\n", lget_time());
+    lfcntl_unlock(fd, 0, SEEK_SET, 0);
+    waitpid(pid1, 0, 0);
+    waitpid(pid2, 0, 0);
+    return;
+}
+```
+&emsp;&emsp;执行结果中可以看到是允许的。
+```bash
+20:28:16.176229 : 父进程尝试拥有1个读锁
+20:28:16.176444 : 父进程拥有1个读锁
+20:28:17.176819 : 子进程1尝试拥有1个写锁
+20:28:19.176926 : 子进程2尝试拥有1个读锁
+20:28:19.177178 : 子进程2拥有1个读锁
+20:28:21.176859 : 父进程释放了1个读锁
+20:28:23.177314 : 子进程2释放了1个读锁
+20:28:23.177412 : 子进程1拥有1个写锁
+20:28:25.177590 : 子进程1释放了1个写锁
+```
+
+&emsp;&emsp;下面过程通过父进程拥有写锁再释放保证独占行，保证之后的两个读写锁同时竞争。
+```c
+void rd_wr_test2()
+{
+    char file[] = "./1";
+    int fd = open(file, O_RDWR, FILE_MODE);
+    printf("%s : 父进程尝试拥有1个写锁\n", lget_time());
+    lfcntl_wr_lockw(fd, 0, SEEK_SET, 0);
+    printf("%s : 父进程拥有1个写锁\n", lget_time());
+    pid_t pid1;
+    pid_t pid2 = lfork();
+    if(pid2 == 0)
+    {
+        sleep(0);
+        printf("%s : 子进程1尝试拥有1个写锁\n", lget_time());
+        lfcntl_wr_lockw(fd, 0, SEEK_SET, 0);
+        printf("%s : 子进程1拥有1个写锁\n", lget_time());
+        sleep(1);
+        printf("%s : 子进程1释放了1个写锁\n", lget_time());
+        lfcntl_unlock(fd, 0, SEEK_SET, 0);
+        _exit(0);
+    }
+
+    pid1 = fork();
+    if(pid1 == 0)
+    {
+        sleep(1);
+        printf("%s : 子进程2尝试拥有1个读锁\n", lget_time());
+        lfcntl_rd_lockw(fd, 0, SEEK_SET, 0);
+        printf("%s : 子进程2拥有1个读锁\n", lget_time());
+        sleep(1);
+        printf("%s : 子进程2释放了1个读锁\n", lget_time());
+        lfcntl_unlock(fd, 0, SEEK_SET, 0);
+        _exit(0);
+    }
+
+    sleep(3);
+    printf("%s : 父进程释放了1个写锁\n", lget_time());
+    lfcntl_unlock(fd, 0, SEEK_SET, 0);
+    waitpid(pid1, 0, 0);
+    waitpid(pid2, 0, 0);
+    return;
+}
+```
+&emsp;&emsp;测试分为两组，通过调整两个进程中sleep等待的时间改变读写锁的请求顺序，结果分别如下，第一个为写请求先于读，第二个相反.可以看到读写请求的处理顺序是按照FIFO顺序进行处理的。
+```bash
+➜  build git:(master) ✗ ./main 
+20:45:09.636658 : 父进程尝试拥有1个写锁
+20:45:09.636880 : 父进程拥有1个写锁
+20:45:09.637212 : 子进程1尝试拥有1个写锁
+20:45:10.637416 : 子进程2尝试拥有1个读锁
+20:45:12.637240 : 父进程释放了1个写锁
+20:45:12.637360 : 子进程1拥有1个写锁
+20:45:13.637479 : 子进程1释放了1个写锁
+20:45:13.637846 : 子进程2拥有1个读锁
+20:45:14.638017 : 子进程2释放了1个读锁
+```
+
+```bash
+➜  build git:(master) ✗ ./main
+20:41:20.163030 : 父进程尝试拥有1个写锁
+20:41:20.163304 : 父进程拥有1个写锁
+20:41:21.163718 : 子进程1尝试拥有1个写锁
+20:41:23.163771 : 子进程2尝试拥有1个读锁
+20:41:25.163718 : 父进程释放了1个写锁
+20:41:25.163818 : 子进程2拥有1个读锁
+20:41:29.163925 : 子进程2释放了1个读锁
+20:41:29.164005 : 子进程1拥有1个写锁
+20:41:31.164137 : 子进程1释放了1个写锁
+```
+### 3.4.5 记录锁的其他用途
+&emsp;&emsp;可以使用记录锁保证进程在系统中只存在一个副本，即为每个进程关联一个独一无二的文件。
+&emsp;&emsp;文件锁的实现也可以使用绝对路径下的文件的唯一性实现，当然这样存在一些其他问题：
+- 如果进程意外结束，文件无法有效删除，可能出现问题；
+- 使用文件进行唯一性确认本身就是轮询效率堪忧。
+
+# 4 信号量
+## 4.1 Posix信号量
+
+## 4.2 System V信号量
+
+# 参考
+- [建议性锁和强制性锁机制下的锁（原）](http://www.cppblog.com/mysileng/archive/2012/12/17/196372.html)
+- [Linux进程同步之记录锁（fcntl）](https://blog.csdn.net/anonymalias/article/details/9197641?utm_source=blogxgwz6)

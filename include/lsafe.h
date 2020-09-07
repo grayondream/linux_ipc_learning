@@ -124,4 +124,23 @@ int lpthread_rwlock_trywrlock(lpthread_rwlock_t *rwlock); //非阻塞获得写�
 void lpthread_rwlock_cancel_rdwait(void *arg);              //线程取消后处理
 void lpthread_rwlock_cancel_wrwait(void *arg);
 
+/*
+ * 记录锁
+ */
+int lfcntl_lock(int fd, int cmd, int type, off_t start, int where, off_t len);
+
+pid_t lfcntl_lockable(int fd, int type, off_t start, int where, off_t len);
+
+#define lfcntl_rd_lock( fd, offset, where, len) lfcntl_lock(fd, F_SETLK,  F_RDLCK, offset, where, len)
+#define lfcntl_rd_lockw(fd, offset, where, len) lfcntl_lock(fd, F_SETLKW, F_RDLCK, offset, where, len)
+#define lfcntl_wr_lock( fd, offset, where, len) lfcntl_lock(fd, F_SETLK,  F_WRLCK, offset, where, len)
+#define lfcntl_wr_lockw(fd, offset, where, len) lfcntl_lock(fd, F_SETLKW, F_WRLCK, offset, where, len)
+#define lfcntl_unlock(  fd, offset, where, len) lfcntl_lock(fd, F_SETLK,  F_UNLCK, offset, where, len)
+
+//如果未上锁则返回0，上锁了则返回进程id
+#define lfcntl_rd_lockable(fd, offset, where, len) lfcntl_lockable(fd, F_RDLCK, offset, where, len)
+#define lfcntl_wr_lockable(fd, offset, where, len) lfcntl_lockable(fd, F_WRLCK, offset, where, len)
+
+char* lget_time(void);
+
 #endif

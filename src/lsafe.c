@@ -13,6 +13,7 @@
 #include "lsafe.h"
 #include <sys/msg.h>
 #include <sys/ipc.h>
+#include <time.h>
 
 void err_exit(const char *buff, int err_ret)
 {
@@ -449,7 +450,7 @@ int lpthread_rwlock_wrlock(lpthread_rwlock_t *rwlock)
     return ret;
 }
 
-int lpthread_rwlock_unlock(lpthread_rwlock_t *rwlock)
+int lpthread_unlock(lpthread_rwlock_t *rwlock)
 {
     if(rwlock->magic != MAGIC_CHECK)
         return EINVAL;
@@ -544,4 +545,57 @@ void lpthread_rwlock_cancel_wrwait(void *arg)
     lpthread_rwlock_t *rw = arg;
     rw->wait_writers --;
     pthread_mutex_unlock(&rw->mutex);
+}
+
+int lfcntl_lock(int fd, int cmd, int type, off_t start, int where, off_t len)
+{
+    struct flock arg;
+
+    arg.l_len = len;
+    arg.l_start = start;
+    arg.l_type = type;
+    arg.l_whence = where;
+    int ret = fcntl(fd, cmd, &arg);
+    if(ret == -1)
+        err_exit("get the lock error", -1);
+    
+    return ret;
+}
+
+pid_t lfcntl_lockable(int fd, int type, off_t start, int where, off_t len)
+{
+    struct flock arg;
+
+    arg.l_len = len;
+    arg.l_start = start;
+    arg.l_type = type;
+    arg.l_whence = where;
+
+    int ret = fcntl(fd, F_GETLK, &arg);
+    if(ret == -1)
+        return ret;
+
+    if(arg.l_type == F_UNLCK)
+        return 0;
+
+    return ret;
+}
+
+
+
+char* lget_time(void) 
+{
+    static char str[30];
+    struct timeval tv;
+    char* ptr;
+
+    if (gettimeofday(&tv, NULL) < 0) {
+        err_exit("gettimeofdata error", -1);
+    }
+
+    ptr = ctime(&tv.tv_sec);
+    strcpy(str, &ptr[11]);
+    sprintf(str+8, ".%06ld", tv.tv_usec);
+
+    return str;
 }

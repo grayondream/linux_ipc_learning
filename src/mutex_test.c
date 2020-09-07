@@ -1,6 +1,8 @@
 #include "mutex_test.h"
 #include "lsafe.h"
 #include <string.h>
+#include <stdio.h>
+#include <sys/wait.h>
 
 #define MAX_LEN 256
 struct mutex_shared
@@ -170,6 +172,7 @@ void pro_cond_test(int argc, char **argv)
     }
 }
 
+/*
 pthread_t pid1, pid2;
 
 //执行半途中取消另一个线程的运行
@@ -226,9 +229,136 @@ void rwlock_test()
     return 0;
 }
 
+*/
+void lock_file(int fd, int flag)
+{
+    if(!flag) return;
+    lfcntl_wr_lockw(fd, 0, SEEK_SET, 0);
+}
+
+void unlock_file(int fd, int flag)
+{
+    if(!flag) return;
+    lfcntl_unlock(fd, 0, SEEK_SET, 0);
+}
+
+void fcntl_test()
+{
+    char file[] = "/home/grayondream/altas/ipc/build/tmp";
+    pid_t pid = getpid();
+    int fd = open(file, O_RDWR, FILE_MODE);
+    char line[MAX_LEN] = {0};
+    int n = 0;
+    int flag = 1;
+    for(int i = 0;i < 20;i ++)
+    {
+        lock_file(fd, flag);
+        sleep(1);
+        lseek(fd, 0, SEEK_SET);
+        int len = lread(fd, line, MAX_LEN);
+        line[len] = '\0';
+        len = sscanf(line, "%d\n", &n);
+        printf("pid = %d, no = %d\n", pid, n);
+        n++;
+
+        sprintf(line, "%d\n", n);
+        lseek(fd, 0, SEEK_SET);
+        lwrite(fd, line, MAX_LEN);
+
+        unlock_file(fd, flag);
+    }
+
+}
+
+void rd_wr_test()
+{
+    char file[] = "./1";
+    int fd = open(file, O_RDWR, FILE_MODE);
+    printf("%s : 父进程尝试拥有1个读锁\n", lget_time());
+    lfcntl_rd_lockw(fd, 0, SEEK_SET, 0);
+    printf("%s : 父进程拥有1个读锁\n", lget_time());
+    pid_t pid1;
+    pid_t pid2 = lfork();
+    if(pid2 == 0)
+    {
+        sleep(1);
+        printf("%s : 子进程1尝试拥有1个写锁\n", lget_time());
+        lfcntl_wr_lockw(fd, 0, SEEK_SET, 0);
+        printf("%s : 子进程1拥有1个写锁\n", lget_time());
+        sleep(2);
+        printf("%s : 子进程1释放了1个写锁\n", lget_time());
+        lfcntl_unlock(fd, 0, SEEK_SET, 0);
+        _exit(0);
+    }
+
+    pid1 = fork();
+    if(pid1 == 0)
+    {
+        sleep(3);
+        printf("%s : 子进程2尝试拥有1个读锁\n", lget_time());
+        lfcntl_rd_lockw(fd, 0, SEEK_SET, 0);
+        printf("%s : 子进程2拥有1个读锁\n", lget_time());
+        sleep(4);
+        printf("%s : 子进程2释放了1个读锁\n", lget_time());
+        lfcntl_unlock(fd, 0, SEEK_SET, 0);
+        _exit(0);
+    }
+
+    sleep(5);
+    printf("%s : 父进程释放了1个读锁\n", lget_time());
+    lfcntl_unlock(fd, 0, SEEK_SET, 0);
+    waitpid(pid1, 0, 0);
+    waitpid(pid2, 0, 0);
+    return;
+}
+
+void rd_wr_test2()
+{
+    char file[] = "./1";
+    int fd = open(file, O_RDWR, FILE_MODE);
+    printf("%s : 父进程尝试拥有1个写锁\n", lget_time());
+    lfcntl_wr_lockw(fd, 0, SEEK_SET, 0);
+    printf("%s : 父进程拥有1个写锁\n", lget_time());
+    pid_t pid1;
+    pid_t pid2 = lfork();
+    if(pid2 == 0)
+    {
+        sleep(1);
+        printf("%s : 子进程1尝试拥有1个写锁\n", lget_time());
+        lfcntl_wr_lockw(fd, 0, SEEK_SET, 0);
+        printf("%s : 子进程1拥有1个写锁\n", lget_time());
+        sleep(1);
+        printf("%s : 子进程1释放了1个写锁\n", lget_time());
+        lfcntl_unlock(fd, 0, SEEK_SET, 0);
+        _exit(0);
+    }
+
+    pid1 = fork();
+    if(pid1 == 0)
+    {
+        sleep(0);
+        printf("%s : 子进程2尝试拥有1个读锁\n", lget_time());
+        lfcntl_rd_lockw(fd, 0, SEEK_SET, 0);
+        printf("%s : 子进程2拥有1个读锁\n", lget_time());
+        sleep(1);
+        printf("%s : 子进程2释放了1个读锁\n", lget_time());
+        lfcntl_unlock(fd, 0, SEEK_SET, 0);
+        _exit(0);
+    }
+
+    sleep(3);
+    printf("%s : 父进程释放了1个写锁\n", lget_time());
+    lfcntl_unlock(fd, 0, SEEK_SET, 0);
+    waitpid(pid1, 0, 0);
+    waitpid(pid2, 0, 0);
+    return;
+}
+
 int mutex_test(int argc, char **argv)
 {
     //pro_cond_test(argc, argv);
-    rwlock_test();
+    //rwlock_test();
+    //fcntl_test();
+    rd_wr_test2();
 }
 
