@@ -95,4 +95,33 @@ void lpthread_cond_broadcast (pthread_cond_t *__cond);
 void lpthread_cond_wait (pthread_cond_t * __cond, pthread_mutex_t * __mutex);
 void lpthread_cond_timedwait (pthread_cond_t * __cond, pthread_mutex_t * __mutex, const struct timespec * __abstime);
 
+/*
+ * 读写锁
+ */
+#define MAGIC_CHECK 0x19283746
+typedef struct lpthread_rwlock_t
+{
+    pthread_mutex_t mutex;              //互斥锁
+    pthread_cond_t cond_readers;        //读
+    pthread_cond_t cond_writers;        //写
+    int wait_readers;                      //等待读者数量
+    int wait_writers;                      //等待写数量
+    int refercount;                     //引用计数
+    int magic;                          //用于检查当前对象是否初始化
+}lpthread_rwlock_t;
+
+typedef int lpthread_rwlockattr_t;
+#define LPTHREAD_RWLOCK_INITIALIZER {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0, 0, MAGIC_CHECK}
+
+int lpthread_rwlock_init(lpthread_rwlock_t * rwlock, const lpthread_rwlockattr_t * attr);          //初始化读写锁
+int lpthread_rwlock_destroy(lpthread_rwlock_t *rwlock);   //销毁读写锁
+int lpthread_rwlock_rdlock(lpthread_rwlock_t *rwlock);    //读加锁
+int lpthread_rwlock_wrlock(lpthread_rwlock_t *rwlock);    //写加锁
+int lpthread_rwlock_unlock(lpthread_rwlock_t *rwlock);    //解锁
+int lpthread_rwlock_tryrdlock(lpthread_rwlock_t *rwlock); //非阻塞获得读锁
+int lpthread_rwlock_trywrlock(lpthread_rwlock_t *rwlock); //非阻塞获得写锁
+
+void lpthread_rwlock_cancel_rdwait(void *arg);              //线程取消后处理
+void lpthread_rwlock_cancel_wrwait(void *arg);
+
 #endif

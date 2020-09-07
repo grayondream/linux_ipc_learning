@@ -170,8 +170,65 @@ void pro_cond_test(int argc, char **argv)
     }
 }
 
+pthread_t pid1, pid2;
+
+//执行半途中取消另一个线程的运行
+void rwlock_thread1(void *arg)
+{
+    lpthread_rwlock_t *rw = arg;
+    printf("trying to get a read lock\n");
+    lpthread_rwlock_rdlock(rw);
+    printf("thread 1 got a read lock\n");
+    //取消线程2， cond_wait可能出现不一致
+    sleep(3);
+    printf("trying cancel the thread2\n");
+    pthread_cancel(pid2);
+    printf("canceled the thread2\n");
+    sleep(3);
+    lpthread_rwlock_unlock(rw);
+}
+
+void rwlock_thread2(void *arg)
+{
+    lpthread_rwlock_t *rw = arg;
+    printf("trying to get a write lock\n");
+    lpthread_rwlock_wrlock(rw);
+    printf("thread 1 got a write lock\n");
+    sleep(1);
+    lpthread_rwlock_unlock(rw);
+}
+
+void rwlock_test()
+{
+    pthread_setconcurrency(2);
+
+    lpthread_rwlock_t lock;
+    lpthread_rwlock_init(&lock, NULL);
+    pthread_create(&pid1, NULL, rwlock_thread1, &lock);         //创建第一个线程
+    sleep(1);
+    pthread_create(&pid2, NULL, rwlock_thread2, &lock);         //创建第一个线程
+
+    void *status;
+    pthread_join(pid2, &status);
+    if(status != PTHREAD_CANCELED)
+    {
+        printf("thread 2 status  %p\n", status);
+    }
+
+    pthread_join(pid1, &status);
+    if(status != NULL)
+    {
+        printf("thread 2 status  %p\n", status);
+    }
+
+    printf("rwlock: refercount=%d, wait_readers=%d, wait_writers=%d\n", lock.refercount, lock.wait_readers, lock.wait_writers);
+    lpthread_rwlock_destroy(&lock);
+    return 0;
+}
+
 int mutex_test(int argc, char **argv)
 {
-    pro_cond_test(argc, argv);
+    //pro_cond_test(argc, argv);
+    rwlock_test();
 }
 

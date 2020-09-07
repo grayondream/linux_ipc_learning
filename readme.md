@@ -426,6 +426,7 @@ int mq_unlink(const char *name);
 &emsp;&emsp;删除消息队列：
 - ```name```：消息队列的名字。
   
+
 &emsp;&emsp;消息队列本身维护了一个引用计数，当一个进程打开消息队列时引用计数加一，关闭时减一，只有当引用计数为0时才会真正删除。
 
 ```c
@@ -1678,3 +1679,325 @@ void pro_cond_test(int argc, char **argv)
 ```
 
 ## 3.3 读写锁
+&emsp;&emsp;读写锁是计算机程序的并发控制的一种同步机制，也称“共享-互斥锁”、多读者-单写者锁。多读者锁，push lock用于解决读写问题（readers–writers problem）。读操作可并发重入，写操作是互斥的。读写锁又称共享-独占锁，共享即多个读者读，独占即同一时刻只能允许一个锁写。读写锁通常用互斥锁、条件变量、信号量实现。
+&emsp;&emsp;读写锁的基本分配规则为：
+- 只要没有线程占用锁用于写，可以有任意多个线程申请读锁用于读；
+- 只有没有线程占用锁用于读或者写，才可以申请写锁用于写。
+
+&emsp;&emsp;读写锁比较适用的场景为读的操作比写的操作频繁的场景。
+```c
+int pthread_rwlock_init(pthread_rwlock_t *restrict rwlock, const pthread_rwlockattr_t *restrict attr);          //初始化读写锁
+int pthread_rwlock_destroy(pthread_rwlock_t *rwlock);   //销毁读写锁
+int pthread_rwlock_rdlock(pthread_rwlock_t *rwlock);    //读加锁
+int pthread_rwlock_wrlock(pthread_rwlock_t *rwlock);    //写加锁
+int pthread_rwlock_unlock(pthread_rwlock_t *rwlock);    //解锁
+int pthread_rwlock_tryrdlock(pthread_rwlock_t *rwlock); //非阻塞获得读锁
+int pthread_rwlock_trywrlock(pthread_rwlock_t *rwlock); //非阻塞获得写锁
+```
+&emsp;&emsp;
+- ```pthread_rwlock_init```：用于初始化读写锁变量```pthread_rwlock_t```，如果声明为静态变量可以使用```PTHEAD_RWLOCK_INITALIZER```初始化；
+- ```pthread_rwlock_destroy```：用于销毁读写锁；
+- ```pthread_rwlock_rdlock```：获取一个读出锁；
+- ```pthread_rwlock_wrlock```：获取一个写锁；
+- ```pthread_rwlock_unlock```：解锁；
+- ```pthread_rwlock_tryrdlock```：尝试获取一个读出锁，非阻塞的；
+- ```pthread_rwlock_trywrlock```：尝试获取一个写锁，非阻塞的。
+
+&emsp;&emsp;**使用条件变量和互斥锁实现读写锁：**
+
+&emsp;&emsp;```pthread_rwlock_t```的定义如下：
+```c
+#define MAGIC_CHECK 0x19283746
+typedef struct lpthread_rwlock_t
+{
+    pthread_mutex_t mutex;              //互斥锁
+    pthread_cond_t cond_readers;        //读
+    pthread_cond_t cond_writers;        //写
+    int wait_readers;                      //等待读者数量
+    int wait_writers;                      //等待写数量
+    int refercount;                     //引用计数
+    int magic;                          //用于检查当前对象是否初始化
+}lpthread_rwlock_t;
+
+typedef int lpthread_rwlockattr_t;
+#define LPTHREAD_RWLOCK_INITIALIZER {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0, 0, MAGIC_CHECK}
+```
+
+```c
+int lpthread_rwlock_init(lpthread_rwlock_t * rwlock, const lpthread_rwlockattr_t * attr)
+{
+    if(attr != 0)
+    {
+        err_exit("Error Parameters", attr);
+    }
+    
+    int ret = 0;
+    if((ret = pthread_mutex_init(&rwlock->mutex, NULL)) != 0)
+    {
+        return ret;
+    }
+    
+    if((ret = pthread_cond_init(&rwlock->cond_readers, NULL)) != 0)
+    {
+        pthread_mutex_destroy(&rwlock->mutex);
+        return ret;
+    }
+    
+    if((ret = pthread_cond_init(&rwlock->cond_writers, NULL)) != 0)
+    {
+        pthread_mutex_destroy(&rwlock->mutex);
+        pthread_cond_destroy(&rwlock->cond_readers);
+    }
+    rwlock->magic = MAGIC_CHECK;
+    rwlock->wait_readers = 0;
+    rwlock->wait_writers = 0;
+    rwlock->refercount = 0;
+    return ret;
+}
+
+int lpthread_rwlock_destroy(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+    {
+        return EINVAL;
+    }
+    
+    if(rwlock->refercount != 0 || 0 != rwlock->wait_readers || 0 != rwlock->wait_writers)
+    {
+        return EBUSY;
+    }
+    
+    int ret = 0;
+    if((ret =  pthread_mutex_destroy(&rwlock->mutex)) != 0)
+        return ret;
+        
+    if(( ret = pthread_cond_destroy(&rwlock->cond_readers)) != 0)
+        return ret;
+        
+    if(( ret = pthread_cond_destroy(&rwlock->cond_writers)) != 0)
+        return ret;
+    
+    return ret;
+}
+
+int lpthread_rwlock_rdlock(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+        return EINVAL;
+
+    int ret = 0;
+    if((ret = pthread_mutex_lock(&rwlock->mutex)) != 0)
+        return ret;
+
+    //refercount < 0 表示当前有写
+    while(rwlock->refercount < 0 || rwlock->wait_writers > 0)
+    {
+        rwlock->wait_readers ++;
+        ret = pthread_cond_wait(&rwlock->cond_readers, &rwlock->mutex);
+        rwlock->wait_readers --;
+        if(ret != 0)
+            break;
+    }
+
+    if(ret == 0)
+    {
+        rwlock->refercount ++;
+    }
+
+    ret = pthread_mutex_unlock(&rwlock->mutex);
+    return ret;
+}
+
+int lpthread_rwlock_wrlock(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+        return EINVAL;
+
+    int ret = 0;
+    if((ret = pthread_mutex_lock(&rwlock->mutex)) != 0)
+        return ret;
+
+    //refercount < 0 表示当前有锁占有
+    while(rwlock->refercount != 0)
+    {
+        rwlock->wait_writers ++;
+        ret = pthread_cond_wait(&rwlock->cond_writers, &rwlock->mutex);
+        rwlock->wait_writers --;
+        if(ret != 0)
+            break;
+    }
+
+    if(ret == 0)
+    {
+        rwlock->refercount = -1;            //当前有一个写锁占用
+    }
+
+    ret = pthread_mutex_unlock(&rwlock->mutex);
+    return ret;
+}
+
+int lpthread_rwlock_unlock(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+        return EINVAL;
+
+    int ret = 0;
+    if((ret = pthread_mutex_lock(&rwlock->mutex)) != 0)
+        return ret;
+
+    //释放锁
+    if(rwlock->refercount == -1)
+    {
+        rwlock->refercount = 0;         //释放读锁
+    }
+    else if(rwlock->refercount > 0)
+    {
+        rwlock->refercount --;          //释放一个写锁
+    }
+    else
+    {
+        return EINVAL;
+    }
+    
+    //条件变量通知，优先处理写锁
+    if(rwlock->wait_writers > 0 && rwlock->refercount == 0)
+    {
+        ret = pthread_cond_signal(&rwlock->cond_writers);
+    }
+    else if(rwlock->wait_readers > 0)
+    {
+        ret = pthread_cond_broadcast(&rwlock->cond_readers);
+    }
+
+    ret = pthread_mutex_unlock(&rwlock->mutex);
+    return ret;
+}
+
+int lpthread_rwlock_tryrdlock(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+    return EINVAL;
+
+    int ret = 0;
+    if((ret = pthread_mutex_lock(&rwlock->mutex)) != 0)
+        return ret;
+
+    //refercount < 0 表示当前有锁占有
+    if(rwlock->refercount == -1 || rwlock->wait_writers > 0)
+    {
+        ret = EBUSY;
+    }
+    else
+    {
+        rwlock->refercount ++;
+    }
+
+    ret = pthread_mutex_unlock(&rwlock->mutex);
+    return ret;
+}
+
+int lpthread_rwlock_trywrlock(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+        return EINVAL;
+
+    int ret = 0;
+    if((ret = pthread_mutex_lock(&rwlock->mutex)) != 0)
+        return ret;
+
+    //refercount < 0 表示当前有锁占有
+    if(rwlock->refercount != 0)
+    {
+        ret = EBUSY;
+    }
+    else
+    {
+        rwlock->refercount = -1;
+    }
+
+    ret = pthread_mutex_unlock(&rwlock->mutex);
+    return ret;
+}
+```
+&emsp;&emsp;上述代码有个问题就是，如果在条件变量等待时有函数调用了```pthread_cancel```或者```pthread_exit```取消了线程，而该部分代码正执行到```*cond_wait```处，则读写锁的值就是不正确的，而且互斥锁也未得到有效的释放。有效的解决方案是添加两个后处理函数：
+```c
+void lpthread_rwlock_cancel_rdwait(void *arg)
+{
+    lpthread_rwlock_t *rw = arg;
+    rw->wait_readers --;
+    pthread_mutex_unlock(&rw->mutex);
+}
+
+void lpthread_rwlock_cancel_wrwait(void *arg)
+{
+    lpthread_rwlock_t *rw = arg;
+    rw->wait_writers --;
+    pthread_mutex_unlock(&rw->mutex);
+}
+```
+&emsp;&emsp;使用下面两个线程后处理函数进行后处理。并且获取读写锁的函数修改为：
+```c
+int lpthread_rwlock_rdlock(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+        return EINVAL;
+
+    int ret = 0;
+    if((ret = pthread_mutex_lock(&rwlock->mutex)) != 0)
+        return ret;
+
+    //refercount < 0 表示当前有写
+    while(rwlock->refercount < 0 || rwlock->wait_writers > 0)
+    {
+        rwlock->wait_readers ++;
+        pthread_cleanup_push(lpthread_rwlock_cancel_rdwait, (void*)rwlock);     //++
+        ret = pthread_cond_wait(&rwlock->cond_readers, &rwlock->mutex);
+        pthread_cleanup_pop(0);                                                 //++
+        rwlock->wait_readers --;
+        if(ret != 0)
+            break;
+    }
+
+    if(ret == 0)
+    {
+        rwlock->refercount ++;
+    }
+
+    ret = pthread_mutex_unlock(&rwlock->mutex);
+    return ret;
+}
+```
+
+```c
+int lpthread_rwlock_wrlock(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+        return EINVAL;
+
+    int ret = 0;
+    if((ret = pthread_mutex_lock(&rwlock->mutex)) != 0)
+        return ret;
+
+    //refercount < 0 表示当前有锁占有
+    while(rwlock->refercount != 0)
+    {
+        rwlock->wait_writers ++;
+        pthread_cleanup_push(lpthread_rwlock_cancel_wrwait, (void*)rwlock);     //++
+        ret = pthread_cond_wait(&rwlock->cond_writers, &rwlock->mutex);
+        pthread_cleanup_pop(0);                                                 //++
+        rwlock->wait_writers --;
+        if(ret != 0)
+            break;
+    }
+
+    if(ret == 0)
+    {
+        rwlock->refercount = -1;            //当前有一个写锁占用
+    }
+
+    ret = pthread_mutex_unlock(&rwlock->mutex);
+    return ret;
+}
+```
+
+## 3.4 记录锁

@@ -332,3 +332,216 @@ void lpthread_cond_timedwait (pthread_cond_t * __cond, pthread_mutex_t * __mutex
     int ret = pthread_cond_timedwait(__cond, __mutex, __abstime);
     ERROR_CHECK(ret, !=, 0, ret, "initialize conda failed!");
 }
+
+int lpthread_rwlock_init(lpthread_rwlock_t * rwlock, const lpthread_rwlockattr_t * attr)
+{
+    if(attr != 0)
+    {
+        err_exit("Error Parameters", attr);
+    }
+    
+    int ret = 0;
+    if((ret = pthread_mutex_init(&rwlock->mutex, NULL)) != 0)
+    {
+        return ret;
+    }
+    
+    if((ret = pthread_cond_init(&rwlock->cond_readers, NULL)) != 0)
+    {
+        pthread_mutex_destroy(&rwlock->mutex);
+        return ret;
+    }
+    
+    if((ret = pthread_cond_init(&rwlock->cond_writers, NULL)) != 0)
+    {
+        pthread_mutex_destroy(&rwlock->mutex);
+        pthread_cond_destroy(&rwlock->cond_readers);
+    }
+    rwlock->magic = MAGIC_CHECK;
+    rwlock->wait_readers = 0;
+    rwlock->wait_writers = 0;
+    rwlock->refercount = 0;
+    return ret;
+}
+
+int lpthread_rwlock_destroy(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+    {
+        return EINVAL;
+    }
+    
+    if(rwlock->refercount != 0 || 0 != rwlock->wait_readers || 0 != rwlock->wait_writers)
+    {
+        return EBUSY;
+    }
+    
+    int ret = 0;
+    if((ret =  pthread_mutex_destroy(&rwlock->mutex)) != 0)
+        return ret;
+        
+    if(( ret = pthread_cond_destroy(&rwlock->cond_readers)) != 0)
+        return ret;
+        
+    if(( ret = pthread_cond_destroy(&rwlock->cond_writers)) != 0)
+        return ret;
+    
+    return ret;
+}
+
+int lpthread_rwlock_rdlock(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+        return EINVAL;
+
+    int ret = 0;
+    if((ret = pthread_mutex_lock(&rwlock->mutex)) != 0)
+        return ret;
+
+    //refercount < 0 表示当前有写
+    while(rwlock->refercount < 0 || rwlock->wait_writers > 0)
+    {
+        rwlock->wait_readers ++;
+        //pthread_cleanup_push(lpthread_rwlock_cancel_rdwait, (void*)rwlock);
+        ret = pthread_cond_wait(&rwlock->cond_readers, &rwlock->mutex);
+        //pthread_cleanup_pop(0);
+        rwlock->wait_readers --;
+        if(ret != 0)
+            break;
+    }
+
+    if(ret == 0)
+    {
+        rwlock->refercount ++;
+    }
+
+    ret = pthread_mutex_unlock(&rwlock->mutex);
+    return ret;
+}
+
+int lpthread_rwlock_wrlock(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+        return EINVAL;
+
+    int ret = 0;
+    if((ret = pthread_mutex_lock(&rwlock->mutex)) != 0)
+        return ret;
+
+    //refercount < 0 表示当前有锁占有
+    while(rwlock->refercount != 0)
+    {
+        rwlock->wait_writers ++;
+        //pthread_cleanup_push(lpthread_rwlock_cancel_wrwait, (void*)rwlock);
+        ret = pthread_cond_wait(&rwlock->cond_writers, &rwlock->mutex);
+        //pthread_cleanup_pop(0);
+        rwlock->wait_writers --;
+        if(ret != 0)
+            break;
+    }
+
+    if(ret == 0)
+    {
+        rwlock->refercount = -1;            //当前有一个写锁占用
+    }
+
+    ret = pthread_mutex_unlock(&rwlock->mutex);
+    return ret;
+}
+
+int lpthread_rwlock_unlock(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+        return EINVAL;
+
+    int ret = 0;
+    if((ret = pthread_mutex_lock(&rwlock->mutex)) != 0)
+        return ret;
+
+    //释放锁
+    if(rwlock->refercount == -1)
+    {
+        rwlock->refercount = 0;         //释放读锁
+    }
+    else if(rwlock->refercount > 0)
+    {
+        rwlock->refercount --;          //释放一个写锁
+    }
+    else
+    {
+        return EINVAL;
+    }
+    
+    //条件变量通知，优先处理写锁
+    if(rwlock->wait_writers > 0 && rwlock->refercount == 0)
+    {
+        ret = pthread_cond_signal(&rwlock->cond_writers);
+    }
+    else if(rwlock->wait_readers > 0)
+    {
+        ret = pthread_cond_broadcast(&rwlock->cond_readers);
+    }
+
+    ret = pthread_mutex_unlock(&rwlock->mutex);
+    return ret;
+}
+
+int lpthread_rwlock_tryrdlock(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+    return EINVAL;
+
+    int ret = 0;
+    if((ret = pthread_mutex_lock(&rwlock->mutex)) != 0)
+        return ret;
+
+    //refercount < 0 表示当前有锁占有
+    if(rwlock->refercount == -1 || rwlock->wait_writers > 0)
+    {
+        ret = EBUSY;
+    }
+    else
+    {
+        rwlock->refercount ++;
+    }
+
+    ret = pthread_mutex_unlock(&rwlock->mutex);
+    return ret;
+}
+
+int lpthread_rwlock_trywrlock(lpthread_rwlock_t *rwlock)
+{
+    if(rwlock->magic != MAGIC_CHECK)
+        return EINVAL;
+
+    int ret = 0;
+    if((ret = pthread_mutex_lock(&rwlock->mutex)) != 0)
+        return ret;
+
+    //refercount < 0 表示当前有锁占有
+    if(rwlock->refercount != 0)
+    {
+        ret = EBUSY;
+    }
+    else
+    {
+        rwlock->refercount = -1;
+    }
+
+    ret = pthread_mutex_unlock(&rwlock->mutex);
+    return ret;
+}
+
+void lpthread_rwlock_cancel_rdwait(void *arg)
+{
+    lpthread_rwlock_t *rw = arg;
+    rw->wait_readers --;
+    pthread_mutex_unlock(&rw->mutex);
+}
+
+void lpthread_rwlock_cancel_wrwait(void *arg)
+{
+    lpthread_rwlock_t *rw = arg;
+    rw->wait_writers --;
+    pthread_mutex_unlock(&rw->mutex);
+}
