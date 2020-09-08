@@ -8,8 +8,10 @@
 #include <sys/stat.h>
 #include <signal.h>
 #include <pthread.h>
+#include <semaphore.h>
 
 #define MAX_LEN 1024
+#define PATH_MAX 256
 #define FILE_MODE S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP 
 
 void err_exit(const char *buff, int err_ret);
@@ -18,7 +20,23 @@ void err_exit(const char *buff, int err_ret);
                                               char (buff)[MAX_LEN] = {0};\
                                               snprintf((buff), MAX_LEN, (desc), (val));\
                                               err_exit((buff), (ret));\
-                                              }
+                                              }\
+
+#define ERROR_CHECK_1(func, arg1, ret, op, failed, msg)     ret = func((arg1));   \
+                                                            ERROR_CHECK((ret), op, (failed), (arg1), #func" error "msg)
+
+#define ERROR_CHECK_1D(func, arg1, ret) ERROR_CHECK_1(func, arg1, ret, ==, -1, "%d")
+#define ERROR_CHECK_1S(func, arg1, ret) ERROR_CHECK_1(func, arg1, ret, ==, -1, "%s")
+#define ERROR_CHECK_1P(func, arg1, ret) ERROR_CHECK_1(func, arg1, ret, ==, -1, "%p")
+
+#define ERROR_CHECK_2(func, arg1, arg2, ret, op, failed, msg)  ret = func((arg1), (arg2)); \
+                                                               ERROR_CHECK((ret), op, (failed), (arg1), #func""msg)
+#define ERROR_CHECK_2D(func, arg1, arg2, ret) ERROR_CHECK_2(func, arg1, arg2, ret, ==, -1, "%d")
+#define ERROR_CHECK_2S(func, arg1, arg2, ret) ERROR_CHECK_2(func, arg1, arg2, ret, ==, -1, "%s")
+#define ERROR_CHECK_2P(func, arg1, arg2, ret) ERROR_CHECK_2(func, arg1, arg2, ret, ==, -1, "%p")
+
+#define SAFE_RELEASE(p) if(!(p)){free((p)); (p)=NULL;}
+
 /*
  * @brief   针对api的包装函数  
  */
@@ -81,7 +99,7 @@ void lpthread_mutex_destroy (pthread_mutex_t *__mutex);       //销毁一个互�
 int lpthread_mutex_trylock (pthread_mutex_t *__mutex);       //尝试获得互斥锁
 void lpthread_mutex_lock (pthread_mutex_t *__mutex);          //加锁
 void lpthread_mutex_unlock (pthread_mutex_t *__mutex);         //解锁
-void lpthread_create (pthread_t *__restrict __newthread, const pthread_attr_t *__restrict __attr, void *(*__start_routine) (void *), void *__restrict __arg);
+void lpthread_create (pthread_t * __newthread, const pthread_attr_t * __attr, void *(*__start_routine) (void *), void * __arg);
 void lpthread_exit (void *__retval);
 int lpthread_join (pthread_t __th, void **__thread_return);
 
@@ -142,5 +160,22 @@ pid_t lfcntl_lockable(int fd, int type, off_t start, int where, off_t len);
 #define lfcntl_wr_lockable(fd, offset, where, len) lfcntl_lockable(fd, F_WRLCK, offset, where, len)
 
 char* lget_time(void);
+
+/*
+ * 信号量相关
+ */
+sem_t *lsem_open(const char *name, int oflag, mode_t mode, unsigned int value);
+void   lsem_close(sem_t *sem);
+void   lsem_unlink(const char *name);
+void   lsem_post(sem_t *sem);
+void   lsem_wait(sem_t *sem);
+void   lsem_trywait(sem_t *sem);
+void   lsem_getvalue(sem_t *sem, int *sval);
+
+char * px_ipc_name(const char *name);
+char * lpx_ipc_name(const char *name);
+
+void lsem_init(sem_t *sem, int pshared, unsigned int value);
+void lsem_destroy(sem_t *sem);
 
 #endif

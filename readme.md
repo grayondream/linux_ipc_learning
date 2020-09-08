@@ -2369,9 +2369,270 @@ void rd_wr_test2()
 - 使用文件进行唯一性确认本身就是轮询效率堪忧。
 
 # 4 信号量
-## 4.1 Posix信号量
+## 4.1 简介
+&emsp;&emsp;信号量是用于提供不用进程或者不同线程之间的同步手段的原语，分为：
+- Posix 有名信号量：可用于进程或者线程间的同步；
+- Posix基于内存的信号量（无名信号量）：存放于共享内存中，可用于进程或者线程的同步；
+- System V信号量：在内核中维护，可用于进程或线程间的同步。
 
-## 4.2 System V信号量
+&emsp;&emsp;另外信号量同时根据取值不同可分为：
+- 二值信号量：取值只能是0或者1，可以实现类似互斥锁的跨进程的锁机制。
+- 计数信号量：取值大于1。
+
+&emsp;&emsp;计数信号量具备两种操作动作，称为V（signal()）与P（wait()）（即部分参考书常称的“PV操作”）。V操作会增加信号标S的数值，P操作会减少它。
+- P操作，检测信标值S：
+    - 如果```S <= 0```，则阻塞直到```S > 0```，并将信标值```S=S-1```；
+    - 如果```S > 0```，则直接```S=S-1```；
+- V操作：直接增加信标值```S=S+1```。
+
+&emsp;&emsp;PV操作某种程度上等价于如下代码只不过是原子的.
+```c
+int p(int seq)
+{
+    while(seq <= 0) ;
+    return --seq;
+}
+
+int v(int seq)
+{
+    return ++seq;
+}
+```
+
+&emsp;&emsp;互斥锁，信号量和条件变量的区别：
+1. 互斥锁强调的是资源的访问互斥，信号量强调进程或者线程之间的同步，条件变量常与互斥锁同时使用，达到线程同步的目的：条件变量通过允许线程阻塞和等待另一个线程发送信号的方法弥补了互斥锁的不足；
+2. 互斥锁总是必须由给其上锁的线程解锁，信号量的挂出确不必由执行过它的等待操作的同一线程执行；
+3. 互斥锁要么被锁住，要么被解锁（二值状态，类似于二值信号量）；
+4. 既然信号量有一个与之关联的状态（它的数值），那么信号量的挂出操作总是被记住。然而当向一个条件变量发送信号时，如果没有线程等待在该条件变量上，那么信号将丢失。
+
+## 4.2 Posix信号量
+### 4.2.1 有名信号量
+```c
+#include <semaphore.h>
+sem_t *sem_open(const char *name, int oflag, mode_t mode, unsigned int value);
+int sem_close(sem_t *sem);
+int sem_unlink(const char *name);
+int sem_post(sem_t *sem);
+int sem_wait(sem_t *sem);
+int sem_trywait(sem_t *sem);
+int sem_getvalue(sem_t *sem, int *sval);
+```
+
+- ```sem_open```：创建或者打开一个信号量；
+    - ```name```：信号量在文件系统上的文件名；
+    - ```oflag```：可以为```0,O_CREAT或者O_CREAT|O_EXCL```；
+    - ```mode```：信号量的权限位；
+    - ```value```：信号量的初值不能大于```SEM_VALUE_MAX```；
+    - 返回自```sem_t```是一个该信号量的标识符的指针；
+- ```sem_close```：关闭一个信号量，但是并不删除信号量，另外进程终止系统会自动关闭当前进程打开的信号量；
+    - ```sem```：信号量的指针，通过```sem_open```获得；
+- ```sem_unlink```：删除信号量，需要注意的是信号量同样维护了一个引用计数，只有当引用计数为0时才会显示的删除；
+    - ```name```：信号量的在文件系统上的唯一标示；
+- ```sem_post```：V操作，将信号量的值+1，并唤醒等待信号量的任意线程；
+    - ```sem```：信号量的指针，通过```sem_open```获得；
+- ```sem_wait```：P操作，如果当前信号量小于等于0则阻塞，将信号量的值-1，否则直接将信号量-1；
+    - ```sem```：信号量的指针，通过```sem_open```获得；
+- ```sem_trywait```：非阻塞的```sem_wait```；
+    - ```sem```：信号量的指针，通过```sem_open```获得；
+- ```sem_getvalue```：获取当前信号量的值，如果当前信号量上锁则返回0或者负值，其绝对值为信号量的值；
+    - ```sem```：信号量的指针，通过```sem_open```获得；
+    - ```sval```：信号量的值；
+- 以上的函数除了```sem_open```失败返回```SEM_FAILED```，均是成功返回0，失败返回-1并且设置```errno```。
+
+&emsp;&emsp;简单的消费者-生产者问题：
+```c
+#define BUFF_SIZE 5
+typedef struct named_share
+{
+    char buff[BUFF_SIZE];
+    sem_t *lock;
+    sem_t *nempty;
+    sem_t *nstored;
+    int items;
+}named_share;
+
+void* named_produce(void *arg)
+{
+    named_share *ptr = arg;
+    for(int i = 0;i < ptr->items;i++)
+    {
+        lsem_wait(ptr->nempty);
+        lsem_wait(ptr->lock);   //锁
+
+        //生产物品
+        ptr->buff[i % BUFF_SIZE] = rand() % 1000;
+        printf("produce %04d into %2d\n", ptr->buff[i % BUFF_SIZE], i % BUFF_SIZE);
+        sleep(rand()%2);
+        lsem_post(ptr->lock);   //解锁
+        lsem_post(ptr->nstored);
+    }
+
+    return NULL;
+}
+
+void* named_consume(void *arg)
+{
+    named_share *ptr = arg;
+    for(int i = 0;i < ptr->items;i++)
+    {
+        lsem_wait(ptr->nstored);
+        lsem_wait(ptr->lock);   //锁
+
+        //生产物品
+        printf("consume %04d at   %2d\n", ptr->buff[i % BUFF_SIZE], i % BUFF_SIZE);
+        ptr->buff[i % BUFF_SIZE] = -1;
+        sleep(rand()%2);
+        lsem_post(ptr->lock);   //解锁
+        lsem_post(ptr->nempty);
+        //iterator
+    }
+
+    return NULL;
+}
+
+void named_sem_test()
+{
+    char *nempty_name = "nempty";
+    char *nstored_name = "nstored";
+    char *lock_name = "lock";
+    
+    int items = 10;
+    int flag = O_CREAT | O_EXCL;
+
+    named_share arg;
+    srand(time(NULL));
+    arg.items = items;
+    memset(arg.buff, -1, sizeof(int) * BUFF_SIZE);
+    arg.nempty = lsem_open(lpx_ipc_name(nempty_name), flag, FILE_MODE, BUFF_SIZE);
+    arg.nstored = lsem_open(lpx_ipc_name(nstored_name), flag, FILE_MODE, 0);
+    arg.lock = lsem_open(lpx_ipc_name(lock_name), flag, FILE_MODE, 1);
+    
+    pthread_t pid1, pid2;
+    
+    int val = 0;
+    lsem_getvalue(arg.nstored, &val);
+    lsem_getvalue(arg.nempty, &val);
+
+    pthread_setconcurrency(2); 
+    lpthread_create(&pid1, NULL, named_produce, &arg);
+    lpthread_create(&pid2, NULL, named_consume, &arg);
+
+    lpthread_join(pid1, NULL);
+    lpthread_join(pid2, NULL);
+
+    lsem_unlink(lpx_ipc_name(nempty_name));
+    lsem_unlink(lpx_ipc_name(nstored_name));
+    lsem_unlink(lpx_ipc_name(lock_name));
+}
+```
+&emsp;&emsp;结果：
+```bash
+➜  build git:(master) ✗ ./main
+produce 0038 into  0
+produce 0022 into  1
+produce 0049 into  2
+produce 0060 into  3
+produce 0090 into  4
+consume 0038 at    0
+consume 0022 at    1
+consume 0049 at    2
+consume 0060 at    3
+consume 0090 at    4
+produce 0031 into  0
+produce -056 into  1
+produce -103 into  2
+produce -047 into  3
+produce -100 into  4
+consume 0031 at    0
+consume -056 at    1
+consume -103 at    2
+consume -047 at    3
+consume -100 at    4
+```
+### 4.2.2 无名信号量
+```c
+int sem_init(sem_t *sem, int pshared, unsigned int value);
+int sem_destroy(sem_t *sem);
+```
+- ```sem_init``：初始化一个无名信号量；
+    - ```sem```：信号量的指针；
+    - ```pshared```：标志是否共享：
+        - ```pshared==0```：该信号量只能在同一进程不同线程之间共享，当进程终止则消失；
+        - ```pshared!=0```：该信号量驻留与共享内存区，可以在不同进程之间进行共享；
+    - ```value```：信号量的初值；
+    - 返回值出错返回-1，成功并不返回0；
+- ```sem_destroy```：销毁信号量。成功返回0，失败返回-1。
+
+
+&emsp;&emsp;上面的程序的简易修改：
+```c
+void unnamed_sem_test()
+{
+    int items = 10;
+
+    named_share arg;
+    srand(time(NULL));
+    arg.items = items;
+    memset(arg.buff, -1, sizeof(int) * BUFF_SIZE);
+
+    arg.lock = (sem_t*)malloc(sizeof(sem_t));
+    arg.nempty = (sem_t*)malloc(sizeof(sem_t));
+    arg.nstored = (sem_t*)malloc(sizeof(sem_t));
+    
+    lsem_init(arg.lock, 0, 1);
+    lsem_init(arg.nempty, 0, BUFF_SIZE);
+    lsem_init(arg.nstored, 0, 0);
+    
+    pthread_t pid1, pid2;
+
+
+    pthread_setconcurrency(2); 
+    lpthread_create(&pid1, NULL, named_produce, &arg);
+    lpthread_create(&pid2, NULL, named_consume, &arg);
+
+    lpthread_join(pid1, NULL);
+    lpthread_join(pid2, NULL);
+
+    lsem_destroy(arg.lock);
+    lsem_destroy(arg.nempty);
+    lsem_destroy(arg.nstored);
+
+    SAFE_RELEASE(arg.lock);
+    SAFE_RELEASE(arg.nempty);
+    SAFE_RELEASE(arg.nstored);
+}
+```
+
+```bash
+➜  build git:(master) ✗ ./main 
+produce -120 into  0
+produce -098 into  1
+produce 0123 into  2
+produce -058 into  3
+produce 0028 into  4
+consume -120 at    0
+consume -098 at    1
+consume 0123 at    2
+consume -058 at    3
+consume 0028 at    4
+produce 0110 into  0
+produce 0034 into  1
+produce -068 into  2
+produce -115 into  3
+produce 0004 into  4
+consume 0110 at    0
+consume 0034 at    1
+consume -068 at    2
+consume -115 at    3
+consume 0004 at    4
+```
+
+### 4.2.3 例程变种
+#### 4.2.3.1 多生产者单消费者
+#### 4.2.3.2 多生产者多消费者
+#### 4.2.3.3 
+
+## 4.3 System V信号量
 
 # 参考
 - [建议性锁和强制性锁机制下的锁（原）](http://www.cppblog.com/mysileng/archive/2012/12/17/196372.html)

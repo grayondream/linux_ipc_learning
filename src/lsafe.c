@@ -10,10 +10,10 @@
 #include <mqueue.h>
 #include <sys/select.h>
 #include <signal.h>
-#include "lsafe.h"
 #include <sys/msg.h>
 #include <sys/ipc.h>
 #include <time.h>
+#include "lsafe.h"
 
 void err_exit(const char *buff, int err_ret)
 {
@@ -598,4 +598,96 @@ char* lget_time(void)
     sprintf(str+8, ".%06ld", tv.tv_usec);
 
     return str;
+}
+
+sem_t *lsem_open(const char *name, int oflag, mode_t mode, unsigned int value)
+{
+    sem_t* ret = sem_open(name, oflag, mode, value);
+    ERROR_CHECK(ret, ==, SEM_FAILED, name, "sem_open error %s");
+    return ret;
+}
+
+void lsem_close(sem_t *sem)
+{
+    int ret = 0;
+    ERROR_CHECK_1P(sem_close, sem, ret);
+}
+
+void lsem_unlink(const char *name)
+{
+    int ret = 0;
+    ERROR_CHECK_1S(sem_unlink, name, ret);
+}
+
+void lsem_post(sem_t *sem)
+{
+    int ret = 0;
+    ERROR_CHECK_1P(sem_post, sem, ret);
+}
+
+void lsem_wait(sem_t *sem)
+{
+    int ret = 0;
+    ERROR_CHECK_1P(sem_wait, sem, ret);
+}
+
+void lsem_trywait(sem_t *sem)
+{
+    int ret = 0;
+    ERROR_CHECK_1P(sem_trywait, sem, ret);
+}
+
+void lsem_getvalue(sem_t *sem, int *sval)
+{
+    int ret = 0;
+    ERROR_CHECK_2P(sem_getvalue, sem, sval, ret);
+}
+
+
+char * px_ipc_name(const char *name)
+{
+        char    *dir, *dst, *slash;
+        //分配的空间在哪里释放的哦！@deprecated 
+        if ( (dst = malloc(PATH_MAX)) == NULL)
+                return(NULL);
+ 
+                /* 4can override default directory with environment variable */
+        if ( (dir = getenv("PX_IPC_NAME")) == NULL) {
+#ifdef  POSIX_IPC_PREFIX
+                dir = POSIX_IPC_PREFIX;         /* from "config.h" */
+#else
+                dir = "/tmp";                           /* default */
+#endif
+        }
+                /* 4dir must end in a slash */
+        slash = (dir[strlen(dir) - 1] == '/') ? "" : "/";
+        snprintf(dst, PATH_MAX, "%s%s%s", dir, slash, name);
+ 
+        return(dst);                    /* caller can free() this pointer */
+}
+/* end px_ipc_name */
+ 
+char * lpx_ipc_name(const char *name)
+{
+        char    *ptr;
+        // gcc -posix -E -dM - </dev/null >
+#ifdef linux
+        ptr = (char *)name;
+#else
+        if ( (ptr = px_ipc_name(name)) == NULL)
+                err_sys("px_ipc_name error for %s", name);
+#endif
+        return(ptr);
+}
+
+void lsem_init(sem_t *sem, int pshared, unsigned int value)
+{
+    int ret = sem_init(sem, pshared, value);
+    ERROR_CHECK(ret, ==, -1, sem, "sem_open error %p");
+}
+
+void lsem_destroy(sem_t *sem)
+{
+    int ret = 0;
+    ERROR_CHECK_1P(sem_destroy, sem, ret);
 }
