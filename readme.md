@@ -2629,8 +2629,329 @@ consume 0004 at    4
 
 ### 4.2.3 例程变种
 #### 4.2.3.1 多生产者单消费者
+&emsp;&emsp;多生产者单消费者需要关注的是不同生产者之间的进度同步。
+```c
+typedef struct multp_singc_share
+{
+    int i;
+    sem_t nempty;
+    sem_t nstored;
+    sem_t lock;
+    int items;
+    char buff[BUFF_SIZE];
+}multp_singc_share;
+
+void* multp_singc_produce(void *arg)
+{
+    multp_singc_share *ptr = arg;
+    for(;;)
+    {
+        lsem_wait(&(ptr->nempty));
+        lsem_wait(&(ptr->lock));
+        if(ptr->i >= ptr->items)
+        {
+            lsem_post(&(ptr->lock));
+            lsem_post(&(ptr->nempty));
+            return NULL;
+        }
+        
+        ptr->buff[ptr->i % BUFF_SIZE] = rand() % 100;
+        printf("produce %d at %d\n", ptr->buff[ptr->i * BUFF_SIZE], ptr->i % BUFF_SIZE);
+        ptr->i++;
+        lsem_post(&ptr->lock);
+        lsem_post(&ptr->nstored);
+    }
+}
+
+void* multp_singc_consume(void *arg)
+{
+    multp_singc_share *ptr = arg;
+    for(int i = 0;i < ptr->items;i ++)
+    {
+        lsem_wait(&(ptr->nstored));
+        lsem_wait(&(ptr->lock));
+        
+        printf("consume %d at %d\n", ptr->buff[i % BUFF_SIZE], i % BUFF_SIZE);
+
+        lsem_post(&(ptr->lock));
+        lsem_post(&(ptr->nempty));
+    }
+}
+
+void multp_singc_test()
+{
+    multp_singc_share arg;
+    pthread_t pro_th[THREAD_SIZE], con_th;
+
+    arg.items = 10;
+    arg.i = 0;
+    memset(arg.buff, 0, BUFF_SIZE * sizeof(int));
+    lsem_init(&(arg.lock), 0, 1);
+    lsem_init(&(arg.nempty), 0, BUFF_SIZE);
+    lsem_init(&(arg.nstored), 0, 0);
+
+    pthread_setconcurrency(THREAD_SIZE + 1); 
+    for(int i = 0;i < THREAD_SIZE;i ++)
+    {
+        lpthread_create(&pro_th[i], NULL, multp_singc_produce, &arg);
+    }
+    
+    lpthread_create(&con_th, NULL, multp_singc_consume, &arg);
+
+    for(int i = 0;i < THREAD_SIZE;i ++)
+    {
+        lpthread_join(pro_th[i], NULL);
+    }
+
+    lpthread_join(con_th, NULL);
+
+    lsem_destroy(&(arg.lock));
+    lsem_destroy(&(arg.nempty));
+    lsem_destroy(&(arg.nstored));
+}
+```
+
+```bash
+➜  build git:(master) ✗ ./main   
+produce 83 at 0
+produce 0 at 1
+produce 0 at 2
+produce 0 at 3
+consume 83 at 0
+consume 86 at 1
+produce 48 at 4
+produce 127 at 0
+produce 64 at 1
+consume 77 at 2
+consume 15 at 3
+produce 0 at 2
+consume 93 at 4
+consume 35 at 0
+produce -4 at 3
+produce 31 at 4
+consume 86 at 1
+consume 92 at 2
+consume 49 at 3
+consume 21 at 4
+```
 #### 4.2.3.2 多生产者多消费者
-#### 4.2.3.3 
+&emsp;&emsp;多个生产者和消费者互相产生和读取数据。
+```c
+typedef struct multp_multc_share
+{
+    int pi;
+    int ci;
+    sem_t nempty;
+    sem_t nstored;
+    sem_t lock;
+    int items;
+    char buff[BUFF_SIZE];
+}multp_multc_share;
+
+void* multp_multc_produce(void *arg)
+{
+    multp_multc_share *ptr = arg;
+    for(;;)
+    {
+        lsem_wait(&(ptr->nempty));
+        lsem_wait(&(ptr->lock));
+        if(ptr->pi >= ptr->items)
+        {
+            lsem_post(&(ptr->nstored));
+            lsem_post(&(ptr->nempty));
+            lsem_post(&(ptr->lock));
+            return NULL;
+        }
+        
+        ptr->buff[ptr->pi % BUFF_SIZE] = rand() % 100;
+        printf("produce %d at %d\n", ptr->buff[ptr->pi * BUFF_SIZE], ptr->pi % BUFF_SIZE);
+        ptr->pi++;
+        lsem_post(&ptr->lock);
+        lsem_post(&ptr->nstored);
+    }
+}
+
+void* multp_multc_consume(void *arg)
+{
+    multp_multc_share *ptr = arg;
+    for(;;)
+    {
+        lsem_wait(&(ptr->nstored));
+        lsem_wait(&(ptr->lock));
+        if(ptr->ci >= ptr->items)
+        {
+            lsem_post(&(ptr->nstored));
+            lsem_post(&(ptr->lock));
+            return NULL;
+        }
+
+        printf("consume %d at %d\n", ptr->buff[ptr->ci % BUFF_SIZE], ptr->ci % BUFF_SIZE);
+        ptr->ci++;
+        lsem_post(&(ptr->lock));
+        lsem_post(&(ptr->nempty));
+    }
+}
+
+void multp_multc_test()
+{
+    multp_multc_share arg;
+    pthread_t pro_th[THREAD_SIZE], con_th[THREAD_SIZE];
+
+    arg.items = 10;
+    arg.pi = 0;
+    arg.ci = 0;
+    memset(arg.buff, 0, BUFF_SIZE * sizeof(int));
+    lsem_init(&(arg.lock), 0, 1);
+    lsem_init(&(arg.nempty), 0, BUFF_SIZE);
+    lsem_init(&(arg.nstored), 0, 0);
+
+    pthread_setconcurrency(THREAD_SIZE + 1); 
+    for(int i = 0;i < THREAD_SIZE;i ++)
+    {
+        lpthread_create(&pro_th[i], NULL, multp_multc_produce, &arg);
+    }
+    
+    for(int i = 0;i < THREAD_SIZE;i ++)
+    {
+        lpthread_create(&con_th[i], NULL, multp_multc_consume, &arg);
+    }
+    
+
+    for(int i = 0;i < THREAD_SIZE;i ++)
+    {
+        lpthread_join(pro_th[i], NULL);
+    }
+
+    for(int i = 0;i < THREAD_SIZE;i ++)
+    {
+        lpthread_join(con_th[i], NULL);
+    }
+
+    lsem_destroy(&(arg.lock));
+    lsem_destroy(&(arg.nempty));
+    lsem_destroy(&(arg.nstored));
+}
+```
+
+```bash
+➜  build git:(master) ✗ ./main
+produce 83 at 0
+produce 0 at 1
+produce 0 at 2
+produce 0 at 3
+consume 83 at 0
+consume 86 at 1
+consume 77 at 2
+produce 1 at 4
+produce 0 at 0
+produce 0 at 1
+produce 0 at 2
+consume 15 at 3
+consume 93 at 4
+consume 35 at 0
+consume 86 at 1
+produce -2 at 3
+consume 92 at 2
+produce 98 at 4
+consume 49 at 3
+consume 21 at 4
+```
+#### 4.2.3.3 多缓冲读取
+&emsp;&emsp;通过多缓冲将数据从一个文件写入到另一个文件。
+```c
+typedef struct 
+{
+    struct 
+    {
+        char buff[MAX_LEN + 1];
+        int len;
+    }buff[BUFF_SIZE];
+    sem_t lock;
+    sem_t nempty;
+    sem_t nstored;
+    int items;
+    int readfd;
+    int writefd;
+}wr_share;
+
+//将buffer中的数据写入文件
+void *write_buff(void *arg)
+{
+    wr_share* ptr = arg;
+    int i = 0;
+    while(1)
+    {
+        lsem_wait(&ptr->lock);
+        //获取当前缓冲区的操作
+        lsem_post(&ptr->lock);
+
+        lsem_wait(&ptr->nstored);
+        lwrite(ptr->writefd, ptr->buff[i].buff, ptr->buff[i].len);
+        lwrite(STDOUT_FILENO, ptr->buff[i].buff, ptr->buff[i].len);
+        i++;
+        if(i >= ptr->items)
+        {
+            i = 0;
+        }
+
+        lsem_post(&ptr->nempty);
+    }
+}
+
+//从文件中读取数据
+void *read_buff(void *arg)
+{
+    wr_share* ptr = arg;
+    int i = 0;
+    while(1)
+    {
+        lsem_wait(&ptr->lock);
+        //获取当前缓冲区的操作
+        lsem_post(&ptr->lock);
+
+        lsem_wait(&ptr->nempty);
+        int n = lread(ptr->readfd, ptr->buff[i].buff, MAX_LEN);
+        ptr->buff[i].len = n;
+        i++;
+        if(i >= ptr->items)
+        {
+            i = 0;
+        }
+
+        lsem_post(&ptr->nstored);
+    }
+}
+
+
+void read_write_test()
+{
+    wr_share arg;
+    arg.items = BUFF_SIZE;
+    #if 0
+    char *readfile = "build/CMakeCache.txt";
+    char *writefile = "build/mktmp";
+    #else
+    char *readfile = "CMakeCache.txt";
+    char *writefile = "mktmp";
+    #endif
+    arg.readfd = lopen(readfile, O_RDONLY);
+    arg.writefd = lopen(writefile, O_WRONLY | O_CREAT);
+    lsem_init(&arg.lock, 0, 1);
+    lsem_init(&arg.nempty, 0, arg.items);
+    lsem_init(&arg.nstored, 0, 0);
+
+    pthread_t read_th, write_th;
+    lpthread_create(&read_th, 0, read_buff, &arg);
+    lpthread_create(&write_th, 0, write_buff, &arg);
+
+    lpthread_join(read_th, NULL);
+    lpthread_join(write_th, NULL);
+
+    lsem_destroy(&arg.lock);
+    lsem_destroy(&arg.nempty);
+    lsem_destroy(&arg.nstored);
+}
+```
 
 ## 4.3 System V信号量
 
