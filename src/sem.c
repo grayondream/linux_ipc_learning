@@ -4,6 +4,8 @@
 #include "lsafe.h"
 #include <stdlib.h>
 #include <pthread.h>
+#include <unistd.h>
+#include <stdio.h>
 
 #define THREAD_SIZE 3
 #define BUFF_SIZE 5
@@ -393,11 +395,155 @@ void read_write_test()
     lsem_destroy(&arg.nstored);
 }
 
-int sem_test()
+
+int vsem_create(key_t key)
+{
+    int semid = lsemget(key, 1, 0666 | IPC_CREAT | IPC_EXCL);
+    return semid;
+}
+ 
+int vsem_open(key_t key)
+{
+    int semid = lsemget(key, 0, 0);//创建一个信号量集 
+    return semid;
+}
+ 
+int vsem_p(int semid)//
+{
+    struct sembuf sb = {0, -1, /*IPC_NOWAIT*/SEM_UNDO};//对信号量集中第一个信号进行操作，对信号量的计数值减1，
+    lsemop(semid, &sb, 1);//用来进行P操作 
+    return 0;
+}
+ 
+int vsem_v(int semid)
+{
+    struct sembuf sb = {0, 1, /*0*/SEM_UNDO};
+    lsemop(semid, &sb, 1);
+    return 0;
+}
+ 
+int vsem_d(int semid)
+{
+    int ret = semctl(semid, 0, IPC_RMID, 0);//删除一个信号量集
+    return ret;
+}
+ 
+int vsem_setval(int semid, int val)
+{
+    union semun su;
+    su.val = val;
+    semctl(semid, 0, SETVAL, &su);//给信号量计数值
+    printf("value updated...\n");
+    return 0;
+}
+ 
+int vsem_getval(int semid)//获取信号量集中信号量的计数值
+{
+    int ret = semctl(semid, 0, GETVAL, 0);//返回值是信号量集中
+    printf("current val is %d\n", ret);
+    return ret;
+}
+ 
+int vsem_getmode(int semid)
+{
+    union semun su;
+    struct semid_ds sem;
+    su.buf = &sem;
+    semctl(semid, 0, IPC_STAT, su);
+    printf("current permissions is %o\n", su.buf->sem_perm.mode);
+    return 0;
+}
+ 
+int vsem_setmode(int semid, char *mode)
+{
+    union semun su;
+    struct semid_ds sem;
+    su.buf = &sem;
+ 
+    semctl(semid, 0, IPC_STAT, su);
+
+    printf("current permissions is %o\n", su.buf->sem_perm.mode);
+    sscanf(mode, "%o", (unsigned int *)&su.buf->sem_perm.mode);
+    semctl(semid, 0, IPC_SET, &su);
+    printf("permissions updated...\n");
+ 
+    return 0;
+}
+ 
+void usage(void)
+{
+    fprintf(stderr, "usage:\n");
+    fprintf(stderr, "semtool -c\n");
+    fprintf(stderr, "semtool -d\n");
+    fprintf(stderr, "semtool -p\n");
+    fprintf(stderr, "semtool -v\n");
+    fprintf(stderr, "semtool -s <val>\n");
+    fprintf(stderr, "semtool -g\n");
+    fprintf(stderr, "semtool -f\n");
+    fprintf(stderr, "semtool -m <mode>\n");
+}
+ 
+void v_test(int argc, char *argv[])
+{
+    int opt;
+ 
+    opt = getopt(argc, argv, "cdpvs:gfm:");//解析参数
+    if (opt == '?')
+        exit(EXIT_FAILURE);
+    if (opt == -1)
+    {
+        usage();
+        exit(EXIT_FAILURE);
+    }
+ 
+    key_t key = ftok(".", 's');
+    int semid;
+    switch (opt)
+    {
+    case 'c'://创建信号量集
+        vsem_create(key);
+        break;
+    case 'p'://p操作
+        semid = vsem_open(key);
+        vsem_p(semid);
+        vsem_getval(semid);
+        break;
+    case 'v'://v操作
+        semid = vsem_open(key);
+        vsem_v(semid);
+        vsem_getval(semid);
+        break;
+    case 'd'://删除一个信号量集
+        semid = vsem_open(key);
+        vsem_d(semid);
+        break;
+    case 's'://对信号量集中信号量设置初始计数值
+        semid = vsem_open(key);
+        vsem_setval(semid, atoi(optarg));
+        break;
+    case 'g'://获取信号量集中信号量的计数值
+        semid = vsem_open(key);
+        vsem_getval(semid);
+        break;
+    case 'f'://查看信号量集中信号量的权限
+        semid = vsem_open(key);
+        vsem_getmode(semid);
+        break;
+    case 'm'://更改权限
+        semid = vsem_open(key);
+        vsem_setmode(semid, argv[2]);
+        break;
+    }
+ 
+    return;
+}
+
+int sem_test(int argc, char **argv)
 {
     //named_sem_test();
     //unnamed_sem_test();
     //multp_singc_test();
     //multp_multc_test();
-    read_write_test();
+    //read_write_test();
+    v_test(argc, argv);
 }

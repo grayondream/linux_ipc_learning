@@ -1551,7 +1551,7 @@ void pro_com_test(int argc, char **argv)
     }
 }
 ```
-## 3.2 信号量
+## 3.2 条件变量
 ### 3.2.1 简介
 &emsp;&emsp;互斥锁用来保证临界区的原子性访问，而信号量则用来等待阻塞线程，当线程唤醒的条件满足时则唤醒线程。
 ```c
@@ -2951,9 +2951,252 @@ void read_write_test()
     lsem_destroy(&arg.nempty);
     lsem_destroy(&arg.nstored);
 }
-```
+``` 
 
 ## 4.3 System V信号量
+### 4.3.1 System V信号量
+&emsp;&emsp;上面提到的Posix信号量有二值信号量和计数信号量，而System V信号量是信号量集，即一个或者多个信号量构成的集合，这个集合中的信号量都是计数信号量。
+&emsp;&emsp;对于信号量集，内核维护的信息结构如下：
+```c
+/* Data structure describing a set of semaphores.  */
+struct semid_ds 
+{
+    struct ipc_perm sem_perm;  /* Ownership and permissions */
+    time_t          sem_otime; /* Last semop time */
+    time_t          sem_ctime; /* Last change time */
+    unsigned long   sem_nsems; /* No. of semaphores in set */
+};
+
+//每个信号量包含的值
+unsigned short  semval;   /* semaphore value */
+unsigned short  semzcnt;  /* # waiting for zero */
+unsigned short  semncnt;  /* # waiting for increase */
+pid_t           sempid;   /* ID of process that did last op */
+
+```
+&emsp;&emsp;上面的第一个结构是书上提到的，下面的第二个结构是我主机上的结构，我猜测原理都差不多只是实现进行了修改，因此以书本上的描述为主。
+- ```sem_perm```：用户的操作权限；
+- ```sem_nsems```：当前数据结构中信号量的数量；
+- ```sem_otime```：上一次调用api```sem_op```的时间；
+- ```sem_ctime```：信号量创建的时间或上次调用```IPC_SET```的时间。
+
+```c
+int semget(key_t key, int nsems, int semflg);
+int semop(int semid, struct sembuf *sops, size_t nsops);
+int semctl(int semid, int semnum, int cmd, ...);
+```
+- ```semget```：创建一个或者访问一个已经存在的信号量集；
+    - ```key```：键值；
+    - ```nsems```：希望初始化的信号量数目，初始化之后不可修改，如果只是访问已经存在的信号量集则设为0；
+    - ```semflg```：可以为```SEM_R,SEM_A```分别表示读和修改，也可以为```IPC_CREAT, IPC_EXCL```；
+    - 返回值为信号量的标识符的整数；
+    - 当创建新的信号量时，用户权限，读写权限，创建时间，信号量的数目都会设置，但是结构中的数组，即各个信号量并不会初始化。这本身是不安全的，即便创建之后立即初始化，因为操作是非原子性的，无法保证绝对的安全；
+- ```semop```：操作信号量集，内核能够保证当前操作的原子性；
+    - ```semid```：通过```sem_get```获得的信号量标识符；
+    - ```sops```：是一个如下结构数据的数组,因为有些系统不会定义该结构，因此有些时候需要用户自己定义：
+        ```c
+        struct sembuf
+        {
+        unsigned short int sem_num;	/* semaphore number */
+        short int sem_op;		/* semaphore operation */
+        short int sem_flg;		/* operation flag */
+        };
+        ```
+        - ```sem_num```：需要操作的信号量在信号量集中的下标；
+        - ```sem_flg```：进行操作的设置：
+            - ```0```;
+            - ```IPC_NOWAIT```：不阻塞；
+            - ```SEM_UNDO```;
+        - ```sem_op```：具体的操作方式
+            - ```sem_op > 0```：
+                - 未设置```SEM_UNDO```：将当前值加到```sem_val```上，即```sem_val += sem_op```，等同于V操作，只不过释放线程量可能大于1；
+                - 设置```SEM_UNDO```：从相应的信号量的进程调整值（由内核维护）中减去```sem_op```；
+            - ```sem_op == 0```：调用者希望```sem_val==0```：
+                - 如果```sem_val == 0```：立即返回；
+                - 如果```sem_val != 0```：对应信号量的```semzcnt += 1```，阻塞至为0为止，除非设置了```IPC_NOWAIT```，则不阻塞直接返回错误；
+            - ```sem_op < 0```：调用者希望等待```sem_val >= |sem_op|```用于等待资源：
+                - 如果```sem_val >= |sem_op|```，则```sem_val -= |sem_op|```，若设置了```SEM_UNDO```，则将```|sem_op|```加到对应信号量的进程调整值上；
+                - 如果```sem_val < |sem_op|```，则相应信号量的```semncnt += 1```，线程被阻塞到满足条件为止。等到解阻塞时```semval-=|sem_op```，并且```semncnt -= 1```，如果制定了```SEM_UNDO```则```sem_op```的绝对值加到对应信号量的调整值上。如果指定了```IPC_NOWAIT```则线程不会阻塞。
+            - 如果一个被捕获的信号唤醒了```sem_op```或者信号量被删除，则该函数会过早的返回一个错误。
+- ```semctl```：控制信号量集；
+    - ```semid```：信号量集的标识符；
+    - ```semnum```：要操作的信号量的标号；
+    - ```cmd```：命令；
+        - ```GETVAL```：```semval```作为返回值返回，-1表示失败；
+        - ```SETVAL```：```semval```设置为```arg.val```，成功的话相应信号量在进程中的信号量调整值会设置为0；
+        - ```GETPID```：返回```sempid```；
+        - ```GETNCNT```：返回```semncnt```；
+        - ```GETZCNT```：返回```semzcnt```；
+        - ```GETALL```：返回所有信号量的```semval```，存入```arg.array```；
+        - ```SETALL```：按照```arg.array```设置所有信号量的```semval```；
+        - ```IPC_RMID```：删除指定信号量集；
+        - ```IPC_SET```：根据```arg.buf```设置信号量集的```sem_perm.uid,sem_perm.gid,sem_perm.mode```；
+        - ```IPC_STAT```：返回当前信号量集的```semid_ds```结构，存入```arg.buf```，空间需要用户分配。
+    - ```arg```：可选，根据```cmd```指定。
+    ```c
+    union semun {
+               int              val;    /* Value for SETVAL */
+               struct semid_ds *buf;    /* Buffer for IPC_STAT, IPC_SET */
+               unsigned short  *array;  /* Array for GETALL, SETALL */
+               struct seminfo  *__buf;  /* Buffer for IPC_INFO
+                                           (Linux-specific) */
+           };
+    ```
+
+&emsp;&emsp;存在的一些限制：
+- ```semmni```：系统范围内最大信号量集数；
+- ```semmsl```：每个信号量集最大信号量数；
+- ```semmns```：系统范围内最大信号量数；
+- ```semopm```：每个```semop```调用最大操作数；
+- ```semmnu```：系统范围内最大复旧结构数；
+- ```semume```：每个复旧结构最大复旧项数；
+- ```semvmx```：任何信号量的最大值；
+- ```semaem```：最大退出时调整值。
+
+### 4.3.2 示例
+```c
+int vsem_create(key_t key)
+{
+    int semid = lsemget(key, 1, 0666 | IPC_CREAT | IPC_EXCL);
+    return semid;
+}
+ 
+int vsem_open(key_t key)
+{
+    int semid = lsemget(key, 0, 0);//创建一个信号量集 
+    return semid;
+}
+ 
+int vsem_p(int semid)//
+{
+    struct sembuf sb = {0, -1, /*IPC_NOWAIT*/SEM_UNDO};//对信号量集中第一个信号进行操作，对信号量的计数值减1，
+    lsemop(semid, &sb, 1);//用来进行P操作 
+    return 0;
+}
+ 
+int vsem_v(int semid)
+{
+    struct sembuf sb = {0, 1, /*0*/SEM_UNDO};
+    lsemop(semid, &sb, 1);
+    return 0;
+}
+ 
+int vsem_d(int semid)
+{
+    int ret = semctl(semid, 0, IPC_RMID, 0);//删除一个信号量集
+    return ret;
+}
+ 
+int vsem_setval(int semid, int val)
+{
+    union semun su;
+    su.val = val;
+    semctl(semid, 0, SETVAL, &su);//给信号量计数值
+    printf("value updated...\n");
+    return 0;
+}
+ 
+int vsem_getval(int semid)//获取信号量集中信号量的计数值
+{
+    int ret = semctl(semid, 0, GETVAL, 0);//返回值是信号量集中
+    printf("current val is %d\n", ret);
+    return ret;
+}
+ 
+int vsem_getmode(int semid)
+{
+    union semun su;
+    struct semid_ds sem;
+    su.buf = &sem;
+    semctl(semid, 0, IPC_STAT, su);
+    printf("current permissions is %o\n", su.buf->sem_perm.mode);
+    return 0;
+}
+ 
+int vsem_setmode(int semid, char *mode)
+{
+    union semun su;
+    struct semid_ds sem;
+    su.buf = &sem;
+ 
+    semctl(semid, 0, IPC_STAT, su);
+
+    printf("current permissions is %o\n", su.buf->sem_perm.mode);
+    sscanf(mode, "%o", (unsigned int *)&su.buf->sem_perm.mode);
+    semctl(semid, 0, IPC_SET, &su);
+    printf("permissions updated...\n");
+ 
+    return 0;
+}
+ 
+void usage(void)
+{
+    fprintf(stderr, "usage:\n");
+    fprintf(stderr, "semtool -c\n");
+    fprintf(stderr, "semtool -d\n");
+    fprintf(stderr, "semtool -p\n");
+    fprintf(stderr, "semtool -v\n");
+    fprintf(stderr, "semtool -s <val>\n");
+    fprintf(stderr, "semtool -g\n");
+    fprintf(stderr, "semtool -f\n");
+    fprintf(stderr, "semtool -m <mode>\n");
+}
+ 
+void v_test(int argc, char *argv[])
+{
+    int opt;
+ 
+    opt = getopt(argc, argv, "cdpvs:gfm:");//解析参数
+    if (opt == '?')
+        exit(EXIT_FAILURE);
+    if (opt == -1)
+    {
+        usage();
+        exit(EXIT_FAILURE);
+    }
+ 
+    key_t key = ftok(".", 's');
+    int semid;
+    switch (opt)
+    {
+    case 'c'://创建信号量集
+        vsem_create(key);
+        break;
+    case 'p'://p操作
+        semid = vsem_open(key);
+        vsem_p(semid);
+        vsem_getval(semid);
+        break;
+    case 'v'://v操作
+        semid = vsem_open(key);
+        vsem_v(semid);
+        vsem_getval(semid);
+        break;
+    case 'd'://删除一个信号量集
+        semid = vsem_open(key);
+        vsem_d(semid);
+        break;
+    case 's'://对信号量集中信号量设置初始计数值
+        semid = vsem_open(key);
+        vsem_setval(semid, atoi(optarg));
+        break;
+    case 'g'://获取信号量集中信号量的计数值
+        semid = vsem_open(key);
+        vsem_getval(semid);
+        break;
+    case 'f'://查看信号量集中信号量的权限
+        semid = vsem_open(key);
+        vsem_getmode(semid);
+        break;
+    case 'm'://更改权限
+        semid = vsem_open(key);
+        vsem_setmode(semid, argv[2]);
+        break;
+    }
+ 
+    return;
+}
+```
 
 # 参考
 - [建议性锁和强制性锁机制下的锁（原）](http://www.cppblog.com/mysileng/archive/2012/12/17/196372.html)

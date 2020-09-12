@@ -691,3 +691,16 @@ void lsem_destroy(sem_t *sem)
     int ret = 0;
     ERROR_CHECK_1P(sem_destroy, sem, ret);
 }
+
+int lsemget(key_t key, int nsems, int semflg)
+{
+    int ret = semget(key, nsems, semflg);
+    ERROR_CHECK(ret, ==, -1, key, "semget %d failed");
+    return ret;
+}
+
+void lsemop(int semid, struct sembuf *sops, size_t nsops)
+{
+    int ret = semop(semid, sops, nsops);
+    ERROR_CHECK(ret, ==, -1, semid, "semop %d failed!");
+}

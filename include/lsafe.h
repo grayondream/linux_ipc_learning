@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <sys/sem.h>
 
 #define MAX_LEN 1024
 #define PATH_MAX 256
@@ -177,5 +178,19 @@ char * lpx_ipc_name(const char *name);
 
 void lsem_init(sem_t *sem, int pshared, unsigned int value);
 void lsem_destroy(sem_t *sem);
+
+/*
+ * System V信号量
+ */
+typedef union vsemun {
+    int              val;    /* Value for SETVAL */
+    struct semid_ds *buf;    /* Buffer for IPC_STAT, IPC_SET */
+    unsigned short  *array;  /* Array for GETALL, SETALL */
+    struct seminfo  *__buf;  /* Buffer for IPC_INFO
+                                (Linux-specific) */
+}vsemun;
+
+int lsemget(key_t key, int nsems, int semflg);
+void lsemop(int semid, struct sembuf *sops, size_t nsops);
 
 #endif

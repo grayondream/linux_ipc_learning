@@ -10,5 +10,6 @@ int main(int argc, char**argv)
     //posix_msg_test_main(argc, argv);
     //vmsg_test(argc, argv);
     //mutex_test(argc, argv);
-    sem_test();
+    //sem_test();
+    v_test(argc, argv);
 }
