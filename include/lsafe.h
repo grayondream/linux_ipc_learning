@@ -36,6 +36,12 @@ void err_exit(const char *buff, int err_ret);
 #define ERROR_CHECK_2S(func, arg1, arg2, ret) ERROR_CHECK_2(func, arg1, arg2, ret, ==, -1, "%s")
 #define ERROR_CHECK_2P(func, arg1, arg2, ret) ERROR_CHECK_2(func, arg1, arg2, ret, ==, -1, "%p")
 
+#define ERROR_CHECK_3(func, arg1, arg2, arg3, ret, op, failed, msg)  ret = func((arg1), (arg2), arg3); \
+                                                               ERROR_CHECK((ret), op, (failed), (arg1), #func""msg)
+#define ERROR_CHECK_3D(func, arg1, arg2, arg3, ret) ERROR_CHECK_3(func, arg1, arg2, arg3, ret, ==, -1, "%d")
+#define ERROR_CHECK_3S(func, arg1, arg2, arg3, ret) ERROR_CHECK_3(func, arg1, arg2, arg3, ret, ==, -1, "%s")
+#define ERROR_CHECK_3P(func, arg1, arg2, arg3, ret) ERROR_CHECK_3(func, arg1, arg2, arg3, ret, ==, -1, "%p")
+
 #define SAFE_RELEASE(p) if(!(p)){free((p)); (p)=NULL;}
 
 /*
@@ -192,5 +198,9 @@ typedef union vsemun {
 
 int lsemget(key_t key, int nsems, int semflg);
 void lsemop(int semid, struct sembuf *sops, size_t nsops);
+
+void *lmmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+void lmunmap(void *addr, size_t length);
+void lmsync(void *addr, size_t length, int flags);
 
 #endif

@@ -13,6 +13,7 @@
 #include <sys/msg.h>
 #include <sys/ipc.h>
 #include <time.h>
+#include <sys/mman.h>
 #include "lsafe.h"
 
 void err_exit(const char *buff, int err_ret)
@@ -703,4 +704,23 @@ void lsemop(int semid, struct sembuf *sops, size_t nsops)
 {
     int ret = semop(semid, sops, nsops);
     ERROR_CHECK(ret, ==, -1, semid, "semop %d failed!");
+}
+
+void *lmmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
+{
+    void *ptr = mmap(addr, length, prot, flags, fd, offset);
+    ERROR_CHECK(ptr, ==, MAP_FAILED, addr, "mmap %p error");
+    return ptr;
+}
+
+void lmunmap(void *addr, size_t length)
+{
+    int ret = 0;
+    ERROR_CHECK_2P(munmap, addr, length, ret);
+}
+
+void lmsync(void *addr, size_t length, int flags)
+{
+    int ret = 0;
+    ERROR_CHECK_3P(msync, addr, length, flags, ret);
 }

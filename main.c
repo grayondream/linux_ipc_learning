@@ -3,6 +3,7 @@
 #include "myvmsg.h"
 #include "mutex_test.h"
 #include "sem.h"
+#include "mmp.h"
 
 int main(int argc, char**argv)
 {
@@ -11,5 +12,6 @@ int main(int argc, char**argv)
     //vmsg_test(argc, argv);
     //mutex_test(argc, argv);
     //sem_test();
-    v_test(argc, argv);
+    //v_test(argc, argv);
+    mmp_test(argc, argv);
 }

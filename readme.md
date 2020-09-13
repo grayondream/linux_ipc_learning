@@ -3197,6 +3197,196 @@ void v_test(int argc, char *argv[])
     return;
 }
 ```
+# 5 共享内存
+&emsp;&emsp;共享内存是所有IPC中最快的，因为大多数数据读写都要经历读数据（数据从内核复制到进程地址空间）->发送数据(数据从用户地址空间复制到内核空间)->接收端收到数据(从内核空间将数据复制到进程地址空间)，此间最少需要多次系统调用。而进程使用共享内存传递数据不再涉及内核，但是需要进行数据的同步，一般使用互斥锁，条件变量，读写锁，记录锁，信号量。
+&emsp;&emsp;再详细一点儿就是：假设场景有一个客户端和服务端，客户端读取一个文件将文件经过IPC发给服务端，服务端收到数据后将数据写入输出文件。
+- IPC使用非共享内存IPC：
+    1. 客户端通过```read```读取文件，数据由内核复制到客户端进程空间，1次；
+    2. 客户端通过非共享内存IPC写入数据，数据由客户端进程空间复制到内核，1次；
+    3. 服务端经过IPC读取数据，数据从内核复制到服务端进程空间，1次；
+    4. 服务端通过```write```写入文件，数据有用户进程空间拷贝到内核空间，1次；
+- IPC使用共享内存：
+    1. 客户端通过信号量获得访问共享内存区的权限；
+    2. 客户端将数据从输入文件读入到共享内存对象，1次；
+    3. 客户端读入完成通知服务端；
+    4. 客户端将共享内存对象中的数据写出到输出文件，1次。
+
+## 5.1 内存映射
+### 5.1.1 内存映射
+&emsp;&emsp;内存映射文件（Memory-mapped file），或称“文件映射”、“映射文件”，是一段虚内存逐字节对应于一个文件或类文件的资源，使得应用程序处理映射部分如同访问主内存。
+```c
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+int munmap(void *addr, size_t length);
+int msync(void *addr, size_t length, int flags);
+```
+
+- ```mmap```：将一个文件或者一个共享内存对象映射到调用进程地址空间，能够保证父进程中的映射关系能够存留到子进程；
+    - ```addr```：希望映射的进程空间的起始空间，一般设为空指针，由内核自动寻找该起始地址；
+    - ```length```：希望映射到进程地址空间的字节数；
+    - ```prot```：指定读写访问权限：可读（```PROT_READ```），可写（```PROT_WRITE```），可执行（```PROT_EXEC```），不可访问（```PROT_NONE```）；
+    - ```flags```：可选为```MAP_SHARED,MAP_PRIVATE,MAP_FIXED```，其中```MAP_SHARED,MAP_PRIVATE```必须指定其一，```MAP_FIXED```可选；
+        - ```MAP_SHARED```：表示进程对被映射数据的修改共享该对象的进程都可见，会改变底层支持的对象；
+        - ```MAP_PRIVATE```：表示进程对被映射数据的修改只有当前进程可见，不改变底层支持的对象；
+        - 如果为了可移植性```addr```设为```NULL```，不指定```MAP_FIXED```；
+    - ```fd```：希望映射文件的文件描述符，函数调用成功后关闭描述符```fd```不影响映射关系；
+    - ```offset```：映射的开始位置为从映射文件的开头```offset```处；
+- ```munmap```：删除进程地址空间的一个映射关系；
+    - ```addr```：该地址为```mmap```返回的地址；
+    - ```len```：映射区大小；
+- ```msync```：将文件内容和内存映射区的内容进行同步；
+    - ```addr```：需要进程同步的映射区起始地址；
+    - ```length```：需要映射的内存大小；
+    - ```flags```：可选为异步写(```MS_ASYNC```)，同步写(```MS_SYNC```)，高速缓存失效(```MS_INVALIDATE```)，异步写和同步写必须指定其中一个；
+        - ```MS_ASYNC```：等写操作进入队列直接返回；
+        - ```MS_SYNC```：等写操作完成才会返回；
+        - ```MS_INVALIDATE```：与其最终副本不一致的文件数据所占内存中的副本都会失效。
+
+### 5.1.2 内存映射共享数据例子
+&emsp;&emsp;下面的例子就是父子进程通过共享内存访问数据的情况：
+```c
+typedef struct mmap_shared
+{
+    sem_t mutex;
+    int count;
+}mmap_shared;
+
+void mmap_test(int argc, char **argv)
+{
+    int fd = open("./mmap", O_RDWR | O_CREAT, FILE_MODE);
+    mmap_shared *ptr = NULL;
+    mmap_shared ele;
+
+    srand(time((void*)0));
+    lwrite(fd, &ele, sizeof(ele));
+    ptr = lmmap(NULL, sizeof(ele), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    lclose(fd);
+    lsem_init(&ptr->mutex, 1, 1);
+    int lops = 20;
+    pid_t pid = lfork();
+    if(pid == 0)
+    {
+        for(int i = 0;i < lops;i ++)
+        {
+            lsem_wait(&ptr->mutex);
+            printf("child  count = %3d\n", ptr->count++);
+            //sleep(rand()%2);
+            lsem_post(&ptr->mutex);
+        }
+    }
+    else
+    {
+        for(int i = 0;i < lops;i ++)
+        {
+            lsem_wait(&ptr->mutex);
+            printf("father count = %3d\n", ptr->count++);
+            //sleep(rand()%2);
+            lsem_post(&ptr->mutex);
+        }
+    }
+    
+    //waitpid(pid, 0, 0);
+}
+```
+&emsp;&emsp;执行结果：
+```bash
+➜  build git:(master) ✗ ./main 
+father count =   0
+father count =   1
+father count =   2
+father count =   3
+father count =   4
+father count =   5
+child  count =   6
+child  count =   7
+child  count =   8
+child  count =   9
+child  count =  10
+father count =  11
+father count =  12
+child  count =  13
+child  count =  14
+child  count =  15
+child  count =  16
+child  count =  17
+father count =  18
+father count =  19
+father count =  20
+father count =  21
+father count =  22
+father count =  23
+father count =  24
+father count =  25
+father count =  26
+father count =  27
+father count =  28
+father count =  29
+child  count =  30
+child  count =  31
+child  count =  32
+child  count =  33
+child  count =  34
+child  count =  35
+child  count =  36
+child  count =  37
+child  count =  38
+child  count =  39
+```
+
+### 5.1.3 内存映射空间增长的问题
+&emsp;&emsp;因为一般情况下都会将内存映射的大小设置为和文件大小相同或者小，但是如果内存映射空间大于文件大小会如何。
+```c
+void mmap_size_test(int argc, char **argv)
+{
+    if(argc != 3)
+        return;
+    
+    int filesize = atoi(argv[1]);
+    int mmapsize = atoi(argv[2]);
+    int fd = lopen("./mmap", O_RDWR | O_CREAT | O_TRUNC);
+    lseek(fd, filesize - 1, SEEK_SET);
+    lwrite(fd, " ", 1);
+
+    char *ptr = lmmap(NULL, mmapsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    int pagesize = sysconf(_SC_PAGESIZE);       //获取页面大小
+    printf("PAGE_SIZE=%d\n", pagesize);
+    for(int i = 0;i < filesize > mmapsize ? filesize : mmapsize; i += pagesize)
+    {
+        printf("ptr[%d] = %d\n", i, ptr[i]);
+        ptr[i] = 1;
+
+        int j = i + pagesize - 1;
+        printf("ptr[%d] = %d\n", j, ptr[j]);
+        ptr[j] = 1;
+    }
+}
+```
+
+&emsp;&emsp;从下面的测试可以看出，对于内存映射区的访问，由于大小为5000，占用两个页面，第二个页面中[5000,8191]并未使用，对这段超出的内存访问是没有问题的，但是写会导致错误。当内存映射区的大小大于文件大小时，以文件大小为依据，对于5000的文件大小，15000的内存映射区大小，文件占用2个页面，第二个页面只使用了前半段，对前两个页面访问无问题，但是对于相对于页面大小多出的内存映射空间的访问会触发```SIGBUS```。
+![](img/mmap.drawio.svg)
+
+```bash
+➜  build git:(master) ✗ ./main 5000 5000       
+PAGE_SIZE=4096
+ptr[0] = 0
+ptr[4095] = 0
+ptr[4096] = 0
+ptr[8191] = 0
+ptr[8192] = 0
+[1]    9986 segmentation fault (core dumped)  ./main 5000 5000
+➜  build git:(master) ✗ ./main 5000 15000
+PAGE_SIZE=4096
+ptr[0] = 0
+ptr[4095] = 0
+ptr[4096] = 0
+ptr[8191] = 0
+[1]    9996 bus error (core dumped)  ./main 5000 15000
+```
+## 5.2 Posix共享内存
+
+## 5.3 System V共享内存
+
+# 6 远程过程调用
 
 # 参考
 - [建议性锁和强制性锁机制下的锁（原）](http://www.cppblog.com/mysileng/archive/2012/12/17/196372.html)
