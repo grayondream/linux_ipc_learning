@@ -3383,8 +3383,287 @@ ptr[8191] = 0
 [1]    9996 bus error (core dumped)  ./main 5000 15000
 ```
 ## 5.2 Posix共享内存
+### 5.2.1 Posix 共享内存
+&emsp;&emsp;无亲缘关系进程间共享内存的两种方法：
+- 内存映射文件：由```open```函数打开，由```mmap```函数将相应的描述符映射到当前进程地址空间的一个文件；
+- 内存映射对象：由```shm_open```打开一个IPC名字，返回的描述符由```mmap```函数映射到当前进程的地址空间。
+
+```c
+int shm_open(const char *name, int oflag, mode_t mode);
+int shm_unlink(const char *name);
+int ftruncate(int fd, off_t length);
+int fstat(int fd, struct stat *buf);
+```
+- ```shm_open```：创建一个或者打开一个共享内存对象；
+    - ```name```：IPC名字；
+    - ```oflag```：可以有```O_RDONLY,O_RDWR,O_CREATE,O_EXCL,O_TRUNC```，如果同时指定了```O_RDWR,O_TRUNC```标志，所需的共享内存区对象已经存在则长度被截断为0；
+    - ```mode```：权限位，当```oflag```指定```O_CREAT```时有效，否则可指定0；
+- ```shm_unlink```：删除一个共享内存区对象；
+    - ```name```:IPC名字；
+- ```ftruncate```：修改文件或者共享内存区对象大小；
+    - ```fd```：文件描述符；
+    - ```length```：长度：
+        - 普通文件：如果该文件的大小大于```length```参数，额外的数据就被丢弃；如果该文件的大小小于```length```，那么噶文件是否修改以及其大小是否增长是未加说明的。而对于实际的普通文件，可移植的方法：先使用```lseek```偏移到```lenth-1```，然后```write```1个字节的数据；
+        - 共享内存区对象：直接把该对象的大小设置为```length```字节；
+- ```fstat```：获取指定描述符的相关信息；
+    - ```fd```：文件描述符；
+    - ```buf```：具体信息结构。
+
+### 5.2.2 简单的共享计数
+&emsp;&emsp;服务器创建共享内存和信号量，客户端对共享内存中的数据进行读写。
+```c
+//服务端程序创建共享内存和信号量
+void count_server(char *share_name, char *sem_name)
+{
+    //共享内存
+    share_name = lpx_ipc_name(share_name);
+    sem_name = lpx_ipc_name(sem_name);
+    shm_unlink(share_name);
+    int fd = lshm_open(share_name, O_RDWR | O_CREAT | O_EXCL, FILE_MODE);
+    
+    lftruncate(fd, sizeof(int));
+    char *ptr = lmmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    lclose(fd);
+
+    //信号量
+    sem_unlink(sem_name);
+    sem_t *mutex = lsem_open(sem_name, O_CREAT | O_EXCL, FILE_MODE, 1);
+    lsem_close(mutex);
+}
+
+//客户端程序对共享内存区的内容进行修改
+void count_client(char *share_name, char *sem_name)
+{
+    int fd = lshm_open(lpx_ipc_name(share_name), O_RDWR, FILE_MODE);
+    char *ptr = lmmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    lclose(fd);
+
+    sem_t *mutex = sem_open(lpx_ipc_name(sem_name), 0);
+
+    int *count = ptr;
+    pid_t pid = getpid();
+    int lops = 5;
+    for(int i = 0;i < lops;i ++)
+    {
+        lsem_wait(mutex);
+        printf("pid = %d, count = %d\n", pid, (*ptr)++);
+        lsem_post(mutex);
+    }
+}
+
+void mmap_count_test(int argc, char **argv)
+{
+    if(argc != 4)
+        return;
+
+    switch (argv[1][0])
+    {
+    case 'c':
+        count_client(argv[2], argv[3]);break;
+    case 's':
+        count_server(argv[2], argv[3]);break;
+    default:
+        break;
+    }
+}
+```
+
+```bash
+➜  build git:(master) ✗ ./main s s2 sem2                    
+➜  build git:(master) ✗ ./main c s2 sem2 && ./main c s2 sem2
+pid = 23365, count = 0
+pid = 23365, count = 1
+pid = 23365, count = 2
+pid = 23365, count = 3
+pid = 23365, count = 4
+pid = 23366, count = 5
+pid = 23366, count = 6
+pid = 23366, count = 7
+pid = 23366, count = 8
+pid = 23366, count = 9
+```
+### 5.2.3 生产者消费者
+&emsp;&emsp;消费者接受1个参数为共享内存的名字，生产者接受一个共享内存的名字，一个循环次数，一个延时。
+```c
+//消费者
+void cp_server(int argc, char **argv)
+{
+    if(argc != 3)
+        err_exit("argc is not 3", -1);
+
+    char *name = argv[2];
+    shm_unlink(lpx_ipc_name(name));
+    int fd = lshm_open(lpx_ipc_name(name), O_RDWR | O_CREAT | O_EXCL, FILE_MODE);
+    cp_share *ptr = lmmap(NULL, sizeof(cp_share), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    lftruncate(fd, sizeof(cp_share));
+    lclose(fd);
+
+    //initialize the offset
+    for(int i = 0;i < MESSAGE_NO;i ++)
+    {
+        ptr->msg_off[i] = i * MESSAGESIZE;
+    }
+
+    lsem_init(&ptr->nempty, 1, MESSAGE_NO);
+    lsem_init(&ptr->nstored, 1, 0);
+    lsem_init(&ptr->mutex, 1, 1);
+    lsem_init(&ptr->flowmutex, 1, 1);
+
+    int i = 0, lastflow = 0, tmp = 0;
+    for(;;)
+    {
+        lsem_wait(&ptr->nstored);
+        lsem_wait(&ptr->mutex);
+        int offset = ptr->msg_off[i];
+        char *data = &ptr->msg_data[offset];
+        printf("消费者：i = %3d, msg=%s\n", i, data);
+        i = (i + 1) % MESSAGE_NO;
+
+        lsem_post(&ptr->mutex);
+        lsem_post(&ptr->nempty);
+
+        lsem_wait(&ptr->flowmutex);
+        tmp = ptr->nflowing;
+        lsem_post(&ptr->flowmutex);
+
+        if(tmp != lastflow)
+        {
+            printf("noverflow = %d\n", tmp);
+            lastflow = tmp;
+        }
+    }
+}
+
+//生产者
+void cp_client(int argc, char **argv)
+{
+    if(argc != 5)
+        err_exit("argc is not 5", -1);
+
+    int loops = atoi(argv[3]);
+    int nus = atoi(argv[4]);
+    char *name = argv[2];
+
+    int fd = lshm_open(lpx_ipc_name(name), O_RDWR, FILE_MODE);
+    cp_share *ptr = lmmap(NULL, sizeof(cp_share), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    lclose(fd);
+
+    pid_t pid = getpid();
+    char msg[MESSAGESIZE];
+    for(int i = 0;i < loops;i ++)
+    {
+        usleep(nus);
+
+        memset(msg, 0, sizeof(char) * MESSAGESIZE);
+        snprintf(msg, MESSAGESIZE, "pid = %d, message = %d", pid, i);
+
+        int ret = sem_trywait(&ptr->nempty);
+        if(ret == -1)
+        {
+            if(errno == EAGAIN)
+            {
+                lsem_wait(&ptr->flowmutex);
+                ptr->nflowing ++;
+                lsem_post(&ptr->flowmutex);
+                continue;
+            }
+            else
+            {
+                err_exit("sem_trywait error", -1);
+            }
+            
+        }
+
+        lsem_wait(&ptr->mutex);
+        int off = ptr->msg_off[ptr->i];
+        ptr->i = (ptr->i + 1) % MESSAGE_NO;
+        lsem_post(&ptr->mutex);
+
+        strcpy(&ptr->msg_data[off], msg);       
+        lsem_post(&ptr->nstored);
+    }
+}
+
+void mmap_cp_test(int argc, char **argv)
+{
+    if(argc < 2)
+        err_exit("argc < 2", -1);
+
+    switch (argv[1][0])
+    {
+    case 'c':
+        cp_client(argc, argv);break;
+    case 's':
+        cp_server(argc, argv);break;
+    default:
+        break;
+    }
+}
+```
+&emsp;&emsp;结果如下：
+&emsp;&emsp;生产者：
+```c
+➜  build git:(master) ✗ ./main c sem 10 10
+```
+&emsp;&emsp;消费者：
+```c
+➜  build git:(master) ✗ ./main s sem
+消费者：i =   0, msg=pid = 29162, message = 0
+消费者：i =   1, msg=pid = 29162, message = 1
+消费者：i =   2, msg=pid = 29162, message = 2
+消费者：i =   3, msg=pid = 29162, message = 3
+消费者：i =   4, msg=pid = 29162, message = 4
+消费者：i =   5, msg=pid = 29162, message = 5
+消费者：i =   6, msg=pid = 29162, message = 6
+消费者：i =   7, msg=pid = 29162, message = 7
+消费者：i =   8, msg=pid = 29162, message = 8
+消费者：i =   9, msg=pid = 29162, message = 9
+```
 
 ## 5.3 System V共享内存
+&emsp;&emsp;System V共享内存和Posix共享内存类似，区别是先调用```shmget```再调用```shmat```。内核中会维护以下结构：
+```c
+struct shmid_ds 
+{
+    struct ipc_perm shm_perm;    /* Ownership and permissions */
+    size_t          shm_segsz;   /* Size of segment (bytes) */
+    time_t          shm_atime;   /* Last attach time */
+    time_t          shm_dtime;   /* Last detach time */
+    time_t          shm_ctime;   /* Last change time */
+    pid_t           shm_cpid;    /* PID of creator */
+    pid_t           shm_lpid;    /* PID of last shmat(2)/shmdt(2) */
+    shmatt_t        shm_nattch;  /* No. of current attaches */
+    ...
+};
+
+int shmget(key_t key, size_t size, int shmflg);
+void *shmat(int shmid, const void *shmaddr, int shmflg);
+int shmdt(const void *shmaddr);
+int shmctl(int shmid, int cmd, struct shmid_ds *buf);
+```
+- ```shmget```：创建或者打开一个共享内存对象；
+    - ```key```：可以为```IPC_PRIVATE```或者```ftok```的返回值；
+    - ```size```：共享内存的大小，如果是打开一个存在的共享内存则设为0即可；
+    - ```shmflg```：权限组合；
+- ```shmat```：将一个共享内存对象附接到调用进程的地址空间；
+    - ```shmid```：共享内存对象的标识符；
+    - ```shmaddr```:
+        - 如果为空指针则系统自动寻找地址返回；
+        - 如果为非空指针，返回值取决于```flag```是否指定```SHM_RND```：
+            - 指定```SHM_RND```：则相应的共享内存附接到指定的地址向下舍入一个```SHMLBA```常值；
+            - 未指定```SHM_RND```：则相应的共享内存直接附接到指定的地址；
+    - ```shmflg```：指定读写权限；
+- ```shmdt```：解除共享内存映射；
+- ```shmctl```：对共享内存进行操作；
+    - ```IPC_RMID```：从系统中删除标识符指定的共享内存并拆除它；
+    - ```IPC_SET```：将指定的```shmid_ds```结构中的三个成员```shm_perm.uid,shm_perm.gid,shm_per.mode```设置共享内存对象，同时设置```shm_ctime```；
+    - ```IPC_STAT```：将共享内存的状态写入```shmid_ds```结构中。
+
+## 5.4 共享内存的限制
+- ```shmmax```：共享内存区的最大字节；
+- ```shmmnb```：共享内存区的最小字节；
+- ```shmmni```：系统范围内最大共享内存区标识符数；
+- ```shmseg```：每个进程附接的最大共享内存区数；
 
 # 6 远程过程调用
 

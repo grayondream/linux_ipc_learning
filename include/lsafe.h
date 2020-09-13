@@ -31,13 +31,13 @@ void err_exit(const char *buff, int err_ret);
 #define ERROR_CHECK_1P(func, arg1, ret) ERROR_CHECK_1(func, arg1, ret, ==, -1, "%p")
 
 #define ERROR_CHECK_2(func, arg1, arg2, ret, op, failed, msg)  ret = func((arg1), (arg2)); \
-                                                               ERROR_CHECK((ret), op, (failed), (arg1), #func""msg)
+                                                               ERROR_CHECK((ret), op, (failed), (arg1), #func" error "msg)
 #define ERROR_CHECK_2D(func, arg1, arg2, ret) ERROR_CHECK_2(func, arg1, arg2, ret, ==, -1, "%d")
 #define ERROR_CHECK_2S(func, arg1, arg2, ret) ERROR_CHECK_2(func, arg1, arg2, ret, ==, -1, "%s")
 #define ERROR_CHECK_2P(func, arg1, arg2, ret) ERROR_CHECK_2(func, arg1, arg2, ret, ==, -1, "%p")
 
 #define ERROR_CHECK_3(func, arg1, arg2, arg3, ret, op, failed, msg)  ret = func((arg1), (arg2), arg3); \
-                                                               ERROR_CHECK((ret), op, (failed), (arg1), #func""msg)
+                                                               ERROR_CHECK((ret), op, (failed), (arg1), #func" error "msg)
 #define ERROR_CHECK_3D(func, arg1, arg2, arg3, ret) ERROR_CHECK_3(func, arg1, arg2, arg3, ret, ==, -1, "%d")
 #define ERROR_CHECK_3S(func, arg1, arg2, arg3, ret) ERROR_CHECK_3(func, arg1, arg2, arg3, ret, ==, -1, "%s")
 #define ERROR_CHECK_3P(func, arg1, arg2, arg3, ret) ERROR_CHECK_3(func, arg1, arg2, arg3, ret, ==, -1, "%p")
@@ -202,5 +202,10 @@ void lsemop(int semid, struct sembuf *sops, size_t nsops);
 void *lmmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 void lmunmap(void *addr, size_t length);
 void lmsync(void *addr, size_t length, int flags);
+
+int lshm_open(const char *name, int oflag, mode_t mode);
+void lshm_unlink(const char *name);
+void lftruncate(int fd, off_t length);
+void lfstat(int fd, struct stat *buf);
 
 #endif

@@ -14,6 +14,8 @@
 #include <sys/ipc.h>
 #include <time.h>
 #include <sys/mman.h>
+#include <unistd.h>
+#include <sys/types.h>
 #include "lsafe.h"
 
 void err_exit(const char *buff, int err_ret)
@@ -723,4 +725,29 @@ void lmsync(void *addr, size_t length, int flags)
 {
     int ret = 0;
     ERROR_CHECK_3P(msync, addr, length, flags, ret);
+}
+
+int lshm_open(const char *name, int oflag, mode_t mode)
+{
+    int ret = 0;
+    ERROR_CHECK_3S(shm_open, name, oflag, mode, ret);
+    return ret;
+}
+
+void lshm_unlink(const char *name)
+{
+    int ret = 0;
+    ERROR_CHECK_1S(shm_unlink, name, ret);
+}
+
+void lftruncate(int fd, off_t length)
+{
+    int ret = 0;
+    ERROR_CHECK_2D(ftruncate, fd, length, ret);
+}
+
+void lfstat(int fd, struct stat *buf)
+{
+    int ret = 0;
+    ERROR_CHECK_2D(fstat, fd, buf, ret);
 }
