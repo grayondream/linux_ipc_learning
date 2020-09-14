@@ -3666,6 +3666,52 @@ int shmctl(int shmid, int cmd, struct shmid_ds *buf);
 - ```shmseg```：每个进程附接的最大共享内存区数；
 
 # 6 远程过程调用
+&emsp;&emsp;过程调用分为：
+1. 本地过程调用。即一般使用的函数，调用者和被调用者处于同一个进程。本地过程调用一定是同步的；
+2. 单台主机之间的远程过程调用。这种为服务器-客户端模式，一个进程尝试调用另一个进程中的过程。
+3. 不同主机之间的远程过程调用。一个进程尝试调用另一个进程中的过程，而这两个程序处于不同的主机上。
+
+## 6.1 门
+&emsp;&emsp;门是远程过程调用(RPC)的一种实现方式，门是同步的，当客户端调用门api调用服务端的过程时，该函数会阻塞到服务端过程返回或者出错。
+&emsp;&emsp;需要注意的门本身来自Solaris，Linux好像不支持门，因此一下的内容完全来自书上，并未进行验证。
+```c
+int door_call(int fd, door_arg_t &arg);
+typedef void Door_server_proc(void *cookie, char *dataptr, size_t datasize, door_desc_t *descptr, size_t ndesc);
+int door_create(Door_server_proc *proc, void *cookie, u_int attr);
+int door_return(char *dataptr, size_t datasize, door_desc_t *descptr, size_t *ndesc);
+int door_cred(door_cred_t *cred);
+int door_info(int fd, door_info_t *info);
+int door_bind(int fd);
+int door_unbind(void);
+int door_revoke(int fd);
+```
+- ```door_call```：客户端调用，该调用会调用服务端地址空间中的一个过程；
+    - ```fd```：门的文件标识符；
+    - ```arg```：过程的参数和返回值由该结构装载，一般结构如下：
+    ```c
+    typedef struct door_arg{
+        char *data_ptr;;
+        size_t data_size;
+        door_desc_t *desc_ptr;
+        size_t desc_num;
+        char *rbuf;
+        size_t rsize;
+    }door_arg_t;
+    ```
+        - 数据参数：由```data_ptr,data_size```联合指定，一个为数据指针，一个为数据大小，如果没有参数指针置为空，尺寸写为0即可；
+        - 描述符参数：该参数是一个```door_desc_t```的数组，其中包含```desc_num```个描述符，如果没有则置空置零，需要注意的是返回值中也会有描述符参数；
+        - 返回值：返回值在```rbuf```中，尺寸为```rsize```，对于返回值如果客户端指定的尺寸太小无法存放返回值，门函数库会自动对地址空间进行mmap重新映射；
+- ```door_create```：服务器调用用来创建一个过程调用；需要注意的是父进程中打开的描述符为子进程共享，但是只有父进程会收到客户的门激活请求；
+    - ```proc```：函数地址；
+    - ```cookie```：作为过程的第一个参数，过程的其他参数来源于客户端，和上面的结构体一一对应；
+    - ```attr```：描述创建的服务器过程的属性；
+        - ```DOOR_PRIVATE```：门函数库会在服务器进程中自动创建必要的线程执行过程，默认设置该线程处于进程的线程池中。指定当前参数只门函数得有自己的服务器线程池；
+        - ```DOOR_UNREF```：当该门的描述符从2降为1时，将第二个参数指定为```DOOR_UNREF_DATA```再次调用该服务器过程，这次调用的```descptr```参数是一个空指针，```datasize,ndesc```为0；
+- ```door_return```：如上所示，返回对应的数据；
+- ```door_cred```：服务器过程获取每个调用对应的客户凭证；
+- ```door_info```：客户端获取服务器的信息。
+
+## 6.2 Sun RPC
 
 # 参考
 - [建议性锁和强制性锁机制下的锁（原）](http://www.cppblog.com/mysileng/archive/2012/12/17/196372.html)
