@@ -3712,7 +3712,11 @@ int door_revoke(int fd);
 - ```door_info```：客户端获取服务器的信息。
 
 ## 6.2 Sun RPC
+&emsp;&emsp;书上的内容与网上查到的资料和我的主机上支持的部分特性差距较大。暂时搁置，之后需要使用的话再看。
 
-# 参考
+# 7 性能测试
+&emsp;&emsp;测试内容主要包括不同通信方式的带宽，延迟。
+
+# 8 参考
 - [建议性锁和强制性锁机制下的锁（原）](http://www.cppblog.com/mysileng/archive/2012/12/17/196372.html)
 - [Linux进程同步之记录锁（fcntl）](https://blog.csdn.net/anonymalias/article/details/9197641?utm_source=blogxgwz6)
