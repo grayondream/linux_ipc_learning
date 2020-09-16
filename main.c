@@ -4,6 +4,7 @@
 #include "mutex_test.h"
 #include "sem.h"
 #include "mmp.h"
+#include "summ.h"
 
 int main(int argc, char**argv)
 {
@@ -13,5 +14,6 @@ int main(int argc, char**argv)
     //mutex_test(argc, argv);
     //sem_test();
     //v_test(argc, argv);
-    mmp_test(argc, argv);
+    //mmp_test(argc, argv);
+    summary_test(argc, argv);
 }

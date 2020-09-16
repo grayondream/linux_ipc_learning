@@ -3715,7 +3715,20 @@ int door_revoke(int fd);
 &emsp;&emsp;书上的内容与网上查到的资料和我的主机上支持的部分特性差距较大。暂时搁置，之后需要使用的话再看。
 
 # 7 性能测试
-&emsp;&emsp;测试内容主要包括不同通信方式的带宽，延迟。
+&emsp;&emsp;测试代码使用的[IPC-performance-compare](https://github.com/zhiyuan2007/IPC-performance-compare)，运行结果如下：
+```bash
+测试环境：单机通信
+[zmq]         speed is 50000000.000,  message number 100000, used time  .002 seconds
+[unixsocket]  speed is    22114.108,  message number 100000, used time 4.522 seconds
+[socket]      speed is    21877.050,  message number 100000, used time 4.571 seconds
+[pipe]        speed is    20292.207,  message number 100000, used time 4.928 seconds
+[msgqueue]    speed is   555555.555,  message number 100000, used time  .180 seconds
+[file-write]  speed is   340136.054,  message number 100000, used time  .294 seconds
+[file-read]   speed is 14285714.285,  message number 100000, used time  .007 seconds
+[shmwrite]    speed is  2380952.380,  message number 100000, used time  .042 seconds
+```
+从上面的结果可以看出通信的性能排名分别为：zmq->file->共享内存->消息队列->socket->管道。
+> zmq是一个消息队列库。可以在进程内、进程间、TCP、多播中，以消息为单位传输数据，而不是socket的字节流。
 
 # 8 参考
 - [建议性锁和强制性锁机制下的锁（原）](http://www.cppblog.com/mysileng/archive/2012/12/17/196372.html)
